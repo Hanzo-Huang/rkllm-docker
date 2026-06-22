@@ -1,49 +1,75 @@
 # RKLLM Docker images
 
-ARM64 Docker images for running RKLLM models on Rockchip devices. The shared
-environment contains Python 3.11, RKLLM/RKNN libraries, FastAPI, and automatic
-RK3576/RK3588 frequency-script selection.
+## 1. Summary
 
-## Images
+This repository builds `linux/arm64` Docker images for running RKLLM models on
+Rockchip devices. Images include the RKLLM/RKNN runtime, Python 3.11, and an
+OpenAI-compatible FastAPI server on port `8001`.
 
-```text
-ghcr.io/<owner>/<repo>:env-latest
-ghcr.io/<owner>/<repo>/qwen2.5-1.5b-instruct:w4a16-rk3576
-ghcr.io/<owner>/<repo>/qwen2.5-1.5b-instruct:w8a8-rk3576
-```
-
-Use **Build environment image** to publish the base environment. Then run
-**Build model image** for each model variant:
+Published images:
 
 ```text
-model_id: qwen2.5-1.5b-instruct
-variant:  w4a16-rk3576
+ghcr.io/hanzo-huang/rk-llm:env-latest
+ghcr.io/hanzo-huang/rk-llm/qwen2.5-1.5b-instruct:w4a16-rk3576
+ghcr.io/hanzo-huang/rk-llm/qwen2.5-1.5b-instruct:w8a8-rk3576
 ```
+
+## 2. Repository structure
 
 ```text
-model_id: qwen2.5-1.5b-instruct
-variant:  w8a8-rk3576
+app/                     FastAPI RKLLM server
+docker/                  Environment/model Dockerfiles and entrypoint
+models/<model>/<variant> Model download and platform definitions
+runtime/lib/             RKLLM/RKNN ARM64 shared libraries
+runtime/wheels/          RKNN Toolkit Lite ARM64 wheel
+scripts/                 RK3576/RK3588 frequency scripts
+.github/workflows/       Environment and model image builds
+compose.yaml             Run an image containing a model
+compose.mount-model.yaml Run the environment with a host model
 ```
 
-## Run
+Model binaries are downloaded during GitHub Actions builds and are not stored
+in Git.
 
-An embedded model image already contains its startup command:
+## 3. Run a model
+
+### A. Model included in the image
+
+The model path, target platform, and startup command are already configured:
 
 ```bash
-RKLLM_IMAGE=ghcr.io/<owner>/<repo>/qwen2.5-1.5b-instruct:w4a16-rk3576 \
-  docker compose up -d
+sudo docker run --rm -it \
+  --privileged \
+  -p 8001:8001 \
+  -v /dev:/dev \
+  ghcr.io/hanzo-huang/rk-llm/qwen2.5-1.5b-instruct:w4a16-rk3576
 ```
 
-To use the environment image with a model mounted from the host:
+Replace `w4a16-rk3576` with `w8a8-rk3576` to use the W8A8 model.
+
+### B. Use your own model
+
+Mount the model directory and specify the file and target platform:
 
 ```bash
-RKLLM_ENV_IMAGE=ghcr.io/<owner>/<repo>:env-latest \
-  docker compose -f compose.mount-model.yaml up -d
+sudo docker run --rm -it \
+  --privileged \
+  -p 8001:8001 \
+  -v /dev:/dev \
+  -v /home/hanzo/llm/models:/app/models:ro \
+  -e MODEL_PATH=/app/models/my-model.rkllm \
+  -e TARGET_PLATFORM=rk3576 \
+  ghcr.io/hanzo-huang/rk-llm:env-latest
 ```
 
-## Add a model
+The model must be built for the selected `TARGET_PLATFORM`. Set
+`RUN_FREQ_FIX=false` to disable frequency tuning. With `--privileged` and
+`-v /dev:/dev`, Rockchip device nodes are available without separate
+`--device` flags.
 
-Create one definition for each model variant:
+## 4. Add a model image to GitHub
+
+Create a definition using this layout:
 
 ```text
 models/<model-id>/<quantization>-<platform>/model.env
@@ -62,19 +88,18 @@ TARGET_PLATFORM=rk3576
 MODEL_SHA256=
 ```
 
-Run **Build model image** with the directory names as `model_id` and `variant`.
-The result is:
+Then:
+
+1. Commit and push the new `model.env`.
+2. Open **Actions > Build model image > Run workflow**.
+3. Enter `model_id` and `variant` using the directory names.
+4. Keep `base_tag=env-latest` and run the workflow.
+
+The published image will be:
 
 ```text
-ghcr.io/<owner>/<repo>/<model-id>:<variant>
+ghcr.io/hanzo-huang/rk-llm/<model-id>:<variant>
 ```
 
-Use Hugging Face `/resolve/main/` URLs, not `/blob/main/`. Model binaries are
-downloaded by GitHub Actions and should not be committed.
-
-## Notes
-
-- Images are `linux/arm64` only.
-- Models must match `TARGET_PLATFORM`.
-- Frequency tuning requires a privileged container with `/dev` mounted. Set
-  `RUN_FREQ_FIX=false` to disable it.
+Use a Hugging Face `/resolve/main/` download URL instead of `/blob/main/`.
+For private models, add a repository secret named `MODEL_DOWNLOAD_TOKEN`.
