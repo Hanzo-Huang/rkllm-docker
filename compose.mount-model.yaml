@@ -1,0 +1,21 @@
+services:
+  llm-rk3576:
+    image: ${RKLLM_ENV_IMAGE:-llm-rk3576-env:latest}
+    container_name: llm-rk3576
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "0.0.0.0:8001:8001"
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/dma_heap:/dev/dma_heap
+      - /dev/rknpu:/dev/rknpu
+      - /dev/mali0:/dev/mali0
+    volumes:
+      - /dev:/dev
+      - ${MODEL_DIR:-/home/hanzo/llm/models}:/app/models:ro
+    environment:
+      MODEL_PATH: /app/models/Qwen2.5-1.5B-Instruct_w4a16_RK3576.rkllm
+      TARGET_PLATFORM: rk3576
+      RUN_FREQ_FIX: "true"
+

@@ -1,0 +1,18 @@
+services:
+  llm-rk3576:
+    image: ${RKLLM_IMAGE:-llm-rk3576:latest}
+    container_name: llm-rk3576
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "0.0.0.0:8001:8001"
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/dma_heap:/dev/dma_heap
+      - /dev/rknpu:/dev/rknpu
+      - /dev/mali0:/dev/mali0
+    volumes:
+      - /dev:/dev
+    environment:
+      RUN_FREQ_FIX: "true"
+

@@ -1,0 +1,8 @@
+# Web 框架与异步支持
+fastapi>=0.100.0
+uvicorn>=0.22.0
+pydantic>=2.0.0
+
+# 基础库
+requests
+typing-extensions

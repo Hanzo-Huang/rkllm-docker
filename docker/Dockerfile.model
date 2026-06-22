@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1.7
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG MODEL_ID
+ARG MODEL_FILE
+ARG TARGET_PLATFORM=rk3576
+
+LABEL org.opencontainers.image.title="RKLLM model: ${MODEL_ID}" \
+      io.rkllm.model.id="${MODEL_ID}" \
+      io.rkllm.model.file="${MODEL_FILE}" \
+      io.rkllm.target-platform="${TARGET_PLATFORM}"
+
+COPY models/.build/${MODEL_FILE} /app/models/${MODEL_FILE}
+
+ENV MODEL_PATH=/app/models/${MODEL_FILE} \
+    MODEL_ID=${MODEL_ID} \
+    TARGET_PLATFORM=${TARGET_PLATFORM}
+
+CMD ["serve"]
+

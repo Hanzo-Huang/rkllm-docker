@@ -1,0 +1,9 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.env
+
+# Model binaries are downloaded by the model-image workflow. Keep metadata only.
+models/**/*.rkllm
+!models/.build/.gitkeep
+
