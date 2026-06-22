@@ -9,9 +9,9 @@ OpenAI-compatible FastAPI server on port `8001`.
 Published images:
 
 ```text
-ghcr.io/hanzo-huang/rk-llm:env-latest
-ghcr.io/hanzo-huang/rk-llm/qwen2.5-1.5b-instruct:w4a16-rk3576
-ghcr.io/hanzo-huang/rk-llm/qwen2.5-1.5b-instruct:w8a8-rk3576
+ghcr.io/hanzo-huang/rkllm-docker:env-latest
+ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w4a16-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w8a8-rk3576
 ```
 
 ## 2. Repository structure
@@ -42,7 +42,7 @@ sudo docker run --rm -it \
   --privileged \
   -p 8001:8001 \
   -v /dev:/dev \
-  ghcr.io/hanzo-huang/rk-llm/qwen2.5-1.5b-instruct:w4a16-rk3576
+  ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w4a16-rk3576
 ```
 
 Replace `w4a16-rk3576` with `w8a8-rk3576` to use the W8A8 model.
@@ -59,7 +59,7 @@ sudo docker run --rm -it \
   -v /home/hanzo/llm/models:/app/models:ro \
   -e MODEL_PATH=/app/models/my-model.rkllm \
   -e TARGET_PLATFORM=rk3576 \
-  ghcr.io/hanzo-huang/rk-llm:env-latest
+  ghcr.io/hanzo-huang/rkllm-docker:env-latest
 ```
 
 The model must be built for the selected `TARGET_PLATFORM`. Set
@@ -98,7 +98,7 @@ Then:
 The published image will be:
 
 ```text
-ghcr.io/hanzo-huang/rk-llm/<model-id>:<variant>
+ghcr.io/hanzo-huang/rkllm-docker/<model-id>:<variant>
 ```
 
 Use a Hugging Face `/resolve/main/` download URL instead of `/blob/main/`.
