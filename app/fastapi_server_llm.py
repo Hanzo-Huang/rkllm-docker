@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RKLLM OpenAI API Compatible Server
+RKLLM OpenAI/Ollama API Compatible Server
 Supports complete OpenAI API parameters including temperature, top_p, max_tokens, etc.
 FIXED: Pydantic v2 compatibility issues in streaming responses
 """
@@ -15,6 +15,7 @@ import json
 import asyncio
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Generator, Union
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -214,6 +215,27 @@ class ModelsListResponse(BaseModel):
     object: str = Field(default="list", description="Object type")
     data: List[ModelInfo] = Field(..., description="List of models")
 
+class OllamaOptions(BaseModel):
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    num_predict: Optional[int] = None
+
+class OllamaGenerateRequest(BaseModel):
+    model: str = Field(default="rkllm-model", description="Model name")
+    prompt: str = Field(default="", description="Prompt to generate from")
+    system: Optional[str] = Field(default=None, description="Optional system prompt")
+    stream: Optional[bool] = Field(default=True, description="Whether to stream the response")
+    options: Optional[OllamaOptions] = Field(default=None, description="Generation options")
+    keep_alive: Optional[Union[str, int]] = Field(default=None, description="Accepted for Ollama compatibility")
+
+class OllamaChatRequest(BaseModel):
+    model: str = Field(default="rkllm-model", description="Model name")
+    messages: List[ChatMessage] = Field(default_factory=list, description="Chat messages")
+    stream: Optional[bool] = Field(default=True, description="Whether to stream the response")
+    options: Optional[OllamaOptions] = Field(default=None, description="Generation options")
+    keep_alive: Optional[Union[str, int]] = Field(default=None, description="Accepted for Ollama compatibility")
+
 # ==================== Global State Management ====================
 class RequestState:
     """State management for individual requests"""
@@ -244,6 +266,7 @@ class ServerConfig:
         self.default_max_tokens = 512  # Default max tokens
         self.max_concurrent_requests = 2  # Max concurrent requests
         self.timeout_seconds = 120  # Timeout in seconds
+        self.api_format = "openai"  # openai, ollama, or both
 
 config = ServerConfig()
 
@@ -455,6 +478,64 @@ def openai_json(model: BaseModel) -> str:
     return model.model_dump_json(exclude_none=True, ensure_ascii=False)
 
 
+def json_line(data: Dict[str, Any]) -> str:
+    """Serialize one Ollama streaming JSON object."""
+    return json.dumps(data, ensure_ascii=False) + "\n"
+
+
+def now_rfc3339() -> str:
+    """Return an Ollama-style UTC timestamp."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def model_name() -> str:
+    """Return the public model name used by compatibility APIs."""
+    return "rkllm-model"
+
+
+def api_enabled(api_format: str) -> bool:
+    return config.api_format in (api_format, "both")
+
+
+def ensure_api_enabled(api_format: str):
+    if not api_enabled(api_format):
+        raise HTTPException(
+            status_code=404,
+            detail=f"{api_format} API is disabled; set API_FORMAT={api_format} or API_FORMAT=both"
+        )
+
+
+def request_from_ollama_generate(request: OllamaGenerateRequest) -> ChatCompletionRequest:
+    messages = []
+    if request.system:
+        messages.append(ChatMessage(role="system", content=request.system))
+    messages.append(ChatMessage(role="user", content=request.prompt))
+
+    options = request.options or OllamaOptions()
+    return ChatCompletionRequest(
+        model=request.model or model_name(),
+        messages=messages,
+        temperature=options.temperature if options.temperature is not None else config.default_temperature,
+        top_p=options.top_p if options.top_p is not None else config.default_top_p,
+        top_k=options.top_k,
+        max_tokens=options.num_predict if options.num_predict is not None else config.default_max_tokens,
+        stream=request.stream,
+    )
+
+
+def request_from_ollama_chat(request: OllamaChatRequest) -> ChatCompletionRequest:
+    options = request.options or OllamaOptions()
+    return ChatCompletionRequest(
+        model=request.model or model_name(),
+        messages=request.messages,
+        temperature=options.temperature if options.temperature is not None else config.default_temperature,
+        top_p=options.top_p if options.top_p is not None else config.default_top_p,
+        top_k=options.top_k,
+        max_tokens=options.num_predict if options.num_predict is not None else config.default_max_tokens,
+        stream=request.stream,
+    )
+
+
 def normalize_message_content(content: Any) -> str:
     """Normalize OpenAI message content to text for RKLLM.
 
@@ -590,6 +671,57 @@ def process_chat_completion(request: ChatCompletionRequest, request_id: str) -> 
         req_state.completed.set()
         return req_state
 
+
+def acquire_request_slot():
+    global active_requests
+
+    with request_lock:
+        if active_requests >= config.max_concurrent_requests:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": {
+                        "message": "Too many requests, please try again later",
+                        "type": "rate_limit_error",
+                        "code": "rate_limit_exceeded"
+                    }
+                }
+            )
+        active_requests += 1
+
+
+def release_request_slot():
+    global active_requests
+
+    with request_lock:
+        active_requests -= 1
+
+
+def completion_stats(request: ChatCompletionRequest, req_state: RequestState, started_ns: int) -> Dict[str, int]:
+    prompt_tokens = estimate_tokens(build_prompt(request.messages))
+    completion_tokens = estimate_tokens(req_state.full_response)
+    total_duration = max(time.monotonic_ns() - started_ns, 0)
+
+    return {
+        "prompt_eval_count": prompt_tokens,
+        "eval_count": completion_tokens,
+        "total_duration": total_duration,
+        "load_duration": 0,
+        "prompt_eval_duration": 0,
+        "eval_duration": total_duration,
+    }
+
+
+def run_non_stream_completion(request: ChatCompletionRequest, request_id: str) -> RequestState:
+    try:
+        req_state = process_chat_completion(request, request_id)
+        if req_state.error:
+            raise HTTPException(status_code=500, detail=req_state.error)
+        return req_state
+    finally:
+        if request_id in request_states:
+            del request_states[request_id]
+
 # ==================== Application Lifecycle Management ====================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -665,9 +797,9 @@ async def lifespan(app: FastAPI):
 
 # ==================== FastAPI Application ====================
 app = FastAPI(
-    title="RKLLM OpenAI API Server",
+    title="RKLLM API Server",
     version="1.0.0",
-    description="OpenAI API compatible server for RKLLM models",
+    description="OpenAI and Ollama compatible server for RKLLM models",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -686,18 +818,33 @@ app.add_middleware(
 @app.get("/")
 async def root():
     """Root endpoint"""
+    endpoints = {
+        "GET /": "Server information",
+        "GET /health": "Health check",
+    }
+    if api_enabled("openai"):
+        endpoints.update({
+            "GET /v1/models": "List models",
+            "GET /models": "List models",
+            "POST /v1/chat/completions": "OpenAI-compatible chat completion",
+        })
+    if api_enabled("ollama"):
+        endpoints.update({
+            "GET /api/tags": "Ollama-compatible list models",
+            "POST /api/show": "Ollama-compatible model information",
+            "POST /api/generate": "Ollama-compatible text generation",
+            "POST /api/chat": "Ollama-compatible chat completion",
+            "GET /api/version": "Ollama-compatible version",
+        })
+
     return {
-        "message": "RKLLM OpenAI API Server",
+        "message": "RKLLM API Server",
         "status": "running",
         "model": args.rkllm_model_path.split('/')[-1],
         "platform": args.target_platform,
         "version": "1.0.0",
-        "endpoints": {
-            "GET /": "Server information",
-            "GET /health": "Health check",
-            "GET /v1/models": "List models",
-            "POST /v1/chat/completions": "Chat completion"
-        }
+        "api_format": config.api_format,
+        "endpoints": endpoints
     }
 
 @app.get("/health")
@@ -708,16 +855,18 @@ async def health_check():
         "model_initialized": rkllm_model.initialized if rkllm_model else False,
         "active_requests": active_requests,
         "max_concurrent": config.max_concurrent_requests,
+        "api_format": config.api_format,
         "timestamp": int(time.time())
     }
 
 @app.get("/v1/models", response_model=ModelsListResponse)
 async def list_models():
     """List available models"""
+    ensure_api_enabled("openai")
     return ModelsListResponse(
         data=[
             ModelInfo(
-                id="rkllm-model",
+                id=model_name(),
                 created=int(time.time()),
                 owned_by="rkllm"
             )
@@ -732,22 +881,9 @@ async def list_models_alias():
 @app.post("/v1/chat/completions")
 async def create_chat_completion(request: ChatCompletionRequest):
     """Create chat completion - Fully OpenAI API compatible"""
-    global active_requests
+    ensure_api_enabled("openai")
     
-    # Check concurrent request limit
-    with request_lock:
-        if active_requests >= config.max_concurrent_requests:
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": {
-                        "message": "Too many requests, please try again later",
-                        "type": "rate_limit_error",
-                        "code": "rate_limit_exceeded"
-                    }
-                }
-            )
-        active_requests += 1
+    acquire_request_slot()
     
     try:
         request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
@@ -764,7 +900,7 @@ async def create_chat_completion(request: ChatCompletionRequest):
                 
                 try:
                     # Submit task to thread pool
-                    future = executor.submit(process_chat_completion, request, request_id)
+                    executor.submit(process_chat_completion, request, request_id)
                     
                     # Send initial message.
                     initial_chunk = ChatCompletionStreamResponse(
@@ -875,43 +1011,29 @@ async def create_chat_completion(request: ChatCompletionRequest):
             def process_non_stream():
                 nonlocal request_id
                 
-                try:
-                    req_state = process_chat_completion(request, request_id)
-                    
-                    if req_state.error:
-                        raise HTTPException(status_code=500, detail=req_state.error)
-                    
-                    # Estimate token usage
-                    prompt_tokens = estimate_tokens(build_prompt(request.messages))
-                    completion_tokens = estimate_tokens(req_state.full_response)
-                    
-                    # Build response
-                    response = ChatCompletionResponse(
-                        id=request_id,
-                        created=created,
-                        model=request.model,
-                        choices=[
-                            ChatCompletionResponseChoice(
-                                index=0,
-                                message=ChatMessage(
-                                    role="assistant",
-                                    content=req_state.full_response
-                                ),
-                                finish_reason="stop"
-                            )
-                        ],
-                        usage=UsageInfo(
-                            prompt_tokens=prompt_tokens,
-                            completion_tokens=completion_tokens,
-                            total_tokens=prompt_tokens + completion_tokens
+                req_state = run_non_stream_completion(request, request_id)
+                prompt_tokens = estimate_tokens(build_prompt(request.messages))
+                completion_tokens = estimate_tokens(req_state.full_response)
+                return ChatCompletionResponse(
+                    id=request_id,
+                    created=created,
+                    model=request.model,
+                    choices=[
+                        ChatCompletionResponseChoice(
+                            index=0,
+                            message=ChatMessage(
+                                role="assistant",
+                                content=req_state.full_response
+                            ),
+                            finish_reason="stop"
                         )
+                    ],
+                    usage=UsageInfo(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=prompt_tokens + completion_tokens
                     )
-                    
-                    return response
-                finally:
-                    # Clean up request state
-                    if request_id in request_states:
-                        del request_states[request_id]
+                )
             
             # Execute in thread pool
             try:
@@ -930,14 +1052,188 @@ async def create_chat_completion(request: ChatCompletionRequest):
         print(f"[ERROR] Chat completion error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        with request_lock:
-            active_requests -= 1
+        release_request_slot()
+
+
+async def create_ollama_response(request: ChatCompletionRequest, response_mode: str):
+    """Create an Ollama-compatible generate or chat response."""
+    acquire_request_slot()
+    request_id = f"ollama-{uuid.uuid4().hex[:24]}"
+    started_ns = time.monotonic_ns()
+    print(f"[{request_id}] New Ollama {response_mode} request: stream={request.stream}, messages={len(request.messages)}")
+
+    if request.stream:
+        async def generate_stream():
+            try:
+                executor.submit(process_chat_completion, request, request_id)
+                last_activity = time.time()
+
+                while True:
+                    if request_id in request_states:
+                        req_state = request_states[request_id]
+
+                        with req_state.lock:
+                            if req_state.text_queue:
+                                for text in req_state.text_queue:
+                                    chunk = {
+                                        "model": request.model,
+                                        "created_at": now_rfc3339(),
+                                        "done": False,
+                                    }
+                                    if response_mode == "chat":
+                                        chunk["message"] = {"role": "assistant", "content": text}
+                                    else:
+                                        chunk["response"] = text
+                                    yield json_line(chunk)
+                                    last_activity = time.time()
+
+                                req_state.text_queue.clear()
+
+                        if req_state.completed.is_set():
+                            if req_state.error:
+                                yield json_line({"error": req_state.error, "done": True})
+                            stats = completion_stats(request, req_state, started_ns)
+                            final_chunk = {
+                                "model": request.model,
+                                "created_at": now_rfc3339(),
+                                "done": True,
+                                "done_reason": "stop" if not req_state.error else "error",
+                                **stats,
+                            }
+                            if response_mode == "chat":
+                                final_chunk["message"] = {"role": "assistant", "content": ""}
+                            else:
+                                final_chunk["response"] = ""
+                            yield json_line(final_chunk)
+                            break
+
+                    if time.time() - last_activity > 30:
+                        print(f"[{request_id}] Ollama streaming response timeout")
+                        yield json_line({"error": "streaming response timeout", "done": True})
+                        break
+
+                    await asyncio.sleep(0.05)
+
+            except Exception as e:
+                print(f"[{request_id}] Ollama stream generation error: {e}")
+                yield json_line({"error": str(e), "done": True})
+            finally:
+                if request_id in request_states:
+                    del request_states[request_id]
+                release_request_slot()
+
+        return StreamingResponse(
+            generate_stream(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    try:
+        req_state = await asyncio.get_event_loop().run_in_executor(
+            executor, run_non_stream_completion, request, request_id
+        )
+        stats = completion_stats(request, req_state, started_ns)
+        response = {
+            "model": request.model,
+            "created_at": now_rfc3339(),
+            "done": True,
+            "done_reason": "stop",
+            **stats,
+        }
+        if response_mode == "chat":
+            response["message"] = {"role": "assistant", "content": req_state.full_response}
+        else:
+            response["response"] = req_state.full_response
+            response["context"] = []
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        release_request_slot()
+
+
+@app.get("/api/version")
+async def ollama_version():
+    """Return an Ollama-compatible version response."""
+    ensure_api_enabled("ollama")
+    return {"version": "rkllm-1.0.0"}
+
+
+@app.get("/api/tags")
+async def ollama_list_models():
+    """List local models in Ollama-compatible format."""
+    ensure_api_enabled("ollama")
+    modified_at = now_rfc3339()
+    return {
+        "models": [
+            {
+                "name": model_name(),
+                "model": model_name(),
+                "modified_at": modified_at,
+                "size": os.path.getsize(args.rkllm_model_path),
+                "digest": "",
+                "details": {
+                    "parent_model": "",
+                    "format": "rkllm",
+                    "family": "rkllm",
+                    "families": ["rkllm"],
+                    "parameter_size": "unknown",
+                    "quantization_level": "unknown",
+                },
+            }
+        ]
+    }
+
+
+@app.post("/api/show")
+async def ollama_show_model(request: Dict[str, Any]):
+    """Return basic model information in Ollama-compatible format."""
+    ensure_api_enabled("ollama")
+    return {
+        "modelfile": f"FROM {request.get('model') or model_name()}",
+        "parameters": "",
+        "template": "{{ .Prompt }}",
+        "details": {
+            "parent_model": "",
+            "format": "rkllm",
+            "family": "rkllm",
+            "families": ["rkllm"],
+            "parameter_size": "unknown",
+            "quantization_level": "unknown",
+        },
+        "model_info": {
+            "general.architecture": "rkllm",
+            "general.file_type": "rkllm",
+        },
+    }
+
+
+@app.post("/api/generate")
+async def ollama_generate(request: OllamaGenerateRequest):
+    """Generate a completion in Ollama-compatible format."""
+    ensure_api_enabled("ollama")
+    chat_request = request_from_ollama_generate(request)
+    return await create_ollama_response(chat_request, response_mode="generate")
+
+
+@app.post("/api/chat")
+async def ollama_chat(request: OllamaChatRequest):
+    """Generate a chat completion in Ollama-compatible format."""
+    ensure_api_enabled("ollama")
+    chat_request = request_from_ollama_chat(request)
+    return await create_ollama_response(chat_request, response_mode="chat")
 
 # ==================== Main Program ====================
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description="RKLLM OpenAI API Compatible Server",
+        description="RKLLM OpenAI/Ollama API Compatible Server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -959,6 +1255,9 @@ Examples:
                        help='Server port (default: 8001)')
     parser.add_argument('--host', type=str, default='0.0.0.0',
                        help='Server host (default: 0.0.0.0)')
+    parser.add_argument('--api_format', type=str, default=os.environ.get('API_FORMAT', 'openai').lower(),
+                       choices=['openai', 'ollama', 'both'],
+                       help='API format to expose: openai, ollama, or both (default: openai)')
     
     # Model parameters
     parser.add_argument('--max_context_len', type=int, default=2048,
@@ -1006,6 +1305,7 @@ Examples:
     config.default_max_tokens = args.default_max_tokens
     config.max_concurrent_requests = args.max_concurrent
     config.timeout_seconds = args.timeout
+    config.api_format = args.api_format.lower()
     
     # Print configuration
     print("=" * 60)
@@ -1014,6 +1314,7 @@ Examples:
     print(f"  Platform: {args.target_platform}")
     print(f"  Host: {args.host}")
     print(f"  Port: {args.port}")
+    print(f"  API format: {config.api_format}")
     print(f"  Max context length: {config.max_context_len}")
     print(f"  Default temperature: {config.default_temperature}")
     print(f"  Default Top-p: {config.default_top_p}")

@@ -18,4 +18,4 @@ services:
       MODEL_PATH: /app/models/Qwen2.5-1.5B-Instruct_w4a16_RK3576.rkllm
       TARGET_PLATFORM: rk3576
       RUN_FREQ_FIX: "true"
-
+      API_FORMAT: ${API_FORMAT:-openai}

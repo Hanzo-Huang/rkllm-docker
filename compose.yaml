@@ -15,4 +15,4 @@ services:
       - /dev:/dev
     environment:
       RUN_FREQ_FIX: "true"
-
+      API_FORMAT: ${API_FORMAT:-openai}

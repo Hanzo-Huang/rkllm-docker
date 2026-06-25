@@ -7,6 +7,8 @@ OpenAI-compatible HTTP API.
 
 - Run RKLLM models on Rockchip RK3576 and RK3588 devices with Docker.
 - Use an OpenAI-compatible `/v1/chat/completions` endpoint on port `8001`.
+- Optionally expose Ollama-compatible `/api/generate` and `/api/chat`
+  endpoints.
 - Stream chat completions with server-sent events.
 - Choose a ready-to-run model image or mount your own `.rkllm` file.
 - Publish model-specific images to GHCR with GitHub Actions.
@@ -55,6 +57,32 @@ curl http://localhost:8001/v1/chat/completions \
     "max_tokens": 128
   }'
 ```
+
+Expose the Ollama-compatible API instead:
+
+```bash
+sudo docker run --rm -it \
+  --privileged \
+  -p 8001:8001 \
+  -v /dev:/dev \
+  -e API_FORMAT=ollama \
+  ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w4a16-rk3576
+```
+
+```bash
+curl http://localhost:8001/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "rkllm-model",
+    "messages": [
+      {"role": "user", "content": "Write a one-sentence hello from RKLLM."}
+    ],
+    "stream": false
+  }'
+```
+
+Set `API_FORMAT=both` to expose the OpenAI-compatible and
+Ollama-compatible endpoints at the same time.
 
 Use `w8a8-rk3576` instead of `w4a16-rk3576` to run the W8A8 variant.
 
@@ -126,6 +154,28 @@ MODEL_DIR=/home/hanzo/llm/models docker compose -f compose.mount-model.yaml up -
 | `TARGET_PLATFORM` | `auto` | Target platform, such as `rk3576`, `rk3588`, or `rk3588s`. |
 | `RUN_FREQ_FIX` | `true` | Apply platform-specific frequency settings before serving. |
 | `PORT` | `8001` | HTTP server port. |
+| `API_FORMAT` | `openai` | API format to expose: `openai`, `ollama`, or `both`. |
+
+### API Formats
+
+`API_FORMAT=openai` exposes:
+
+- `GET /health`
+- `GET /v1/models`
+- `GET /models`
+- `POST /v1/chat/completions`
+
+`API_FORMAT=ollama` exposes:
+
+- `GET /health`
+- `GET /api/version`
+- `GET /api/tags`
+- `POST /api/show`
+- `POST /api/generate`
+- `POST /api/chat`
+
+Ollama streaming responses use newline-delimited JSON, matching Ollama's API.
+OpenAI streaming responses use server-sent events.
 
 ## Add A Model Image
 
@@ -183,4 +233,3 @@ compose.mount-model.yaml Run the environment with a host model
 Issues and pull requests are welcome. Useful contributions include new model
 definitions, additional Rockchip platform notes, runtime fixes, and clearer
 deployment examples.
-

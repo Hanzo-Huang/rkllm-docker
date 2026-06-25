@@ -23,4 +23,5 @@ exec python3 /app/fastapi_server_llm.py \
     --rkllm_model_path "${MODEL_PATH}" \
     --target_platform "${TARGET_PLATFORM}" \
     --port "${PORT:-8001}" \
+    --api_format "${API_FORMAT:-openai}" \
     "$@"
