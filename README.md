@@ -85,6 +85,8 @@ Set `API_FORMAT=both` to expose the OpenAI-compatible and
 Ollama-compatible endpoints at the same time.
 
 Use `w8a8-rk3576` instead of `w4a16-rk3576` to run the W8A8 variant.
+Use `qwen2.5-3b-instruct` instead of `qwen2.5-1.5b-instruct` to run the
+3B model.
 
 ## Images
 
@@ -92,6 +94,8 @@ Use `w8a8-rk3576` instead of `w4a16-rk3576` to run the W8A8 variant.
 ghcr.io/hanzo-huang/rkllm-docker:env-latest
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w4a16-rk3576
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w8a8-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-3b-instruct:w4a16-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-3b-instruct:w8a8-rk3576
 ```
 
 The `env-latest` image contains the runtime and API server, but no model. Use
@@ -211,8 +215,10 @@ The published image will be:
 ghcr.io/hanzo-huang/rkllm-docker/<model-id>:<variant>
 ```
 
-Use a Hugging Face `/resolve/main/` download URL instead of `/blob/main/`.
-For private models, add a repository secret named `MODEL_DOWNLOAD_TOKEN`.
+If you copy a Hugging Face URL from the web UI, change `/blob/main/` to
+`/resolve/main/` before saving it in `MODEL_URL`; Docker builds need the raw
+file download URL, not the HTML file page. For private models, add a repository
+secret named `MODEL_DOWNLOAD_TOKEN`.
 
 ## Repository Layout
 

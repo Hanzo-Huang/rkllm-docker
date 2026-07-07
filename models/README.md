@@ -9,6 +9,9 @@ models/
   qwen2.5-1.5b-instruct/
     w4a16-rk3576/model.env
     w8a8-rk3576/model.env
+  qwen2.5-3b-instruct/
+    w4a16-rk3576/model.env
+    w8a8-rk3576/model.env
 ```
 
 Required values:
@@ -19,6 +22,9 @@ MODEL_FILE=model.rkllm
 TARGET_PLATFORM=rk3576
 MODEL_SHA256=optional-lowercase-sha256
 ```
+
+Use a direct download URL for `MODEL_URL`. For Hugging Face files, this means
+`/resolve/main/...`, not the `/blob/main/...` page URL copied from the browser.
 
 To add a model:
 
@@ -33,4 +39,6 @@ Images use the model as the repository and the variant as the tag:
 ```text
 ghcr.io/<owner>/<repo>/qwen2.5-1.5b-instruct:w4a16-rk3576
 ghcr.io/<owner>/<repo>/qwen2.5-1.5b-instruct:w8a8-rk3576
+ghcr.io/<owner>/<repo>/qwen2.5-3b-instruct:w4a16-rk3576
+ghcr.io/<owner>/<repo>/qwen2.5-3b-instruct:w8a8-rk3576
 ```
