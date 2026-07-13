@@ -9,9 +9,11 @@ models/
   qwen2.5-1.5b-instruct/
     w4a16-rk3576/model.env
     w8a8-rk3576/model.env
+    w8a8-rk3588/model.env
   qwen2.5-3b-instruct/
     w4a16-rk3576/model.env
     w8a8-rk3576/model.env
+    w8a8-rk3588/model.env
 ```
 
 Required values:
@@ -39,6 +41,8 @@ Images use the model as the repository and the variant as the tag:
 ```text
 ghcr.io/<owner>/<repo>/qwen2.5-1.5b-instruct:w4a16-rk3576
 ghcr.io/<owner>/<repo>/qwen2.5-1.5b-instruct:w8a8-rk3576
+ghcr.io/<owner>/<repo>/qwen2.5-1.5b-instruct:w8a8-rk3588
 ghcr.io/<owner>/<repo>/qwen2.5-3b-instruct:w4a16-rk3576
 ghcr.io/<owner>/<repo>/qwen2.5-3b-instruct:w8a8-rk3576
+ghcr.io/<owner>/<repo>/qwen2.5-3b-instruct:w8a8-rk3588
 ```

@@ -23,6 +23,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import uvicorn
 import argparse
+try:
+    from app.metrics import output_tokens_per_second
+except ImportError:  # Support running this file directly from the app directory.
+    from metrics import output_tokens_per_second
 
 # ==================== System Library Preloading ====================
 def preload_libraries():
@@ -621,6 +625,7 @@ def process_chat_completion(request: ChatCompletionRequest, request_id: str) -> 
     
     # Create request state
     req_state = RequestState(request_id)
+    started_ns = time.monotonic_ns()
     request_states[request_id] = req_state
     
     try:
@@ -658,8 +663,14 @@ def process_chat_completion(request: ChatCompletionRequest, request_id: str) -> 
             req_state.error = f"Inference timeout ({timeout}s)"
             print(f"✗ [{request_id}] {req_state.error}")
         
-        elapsed = time.time() - req_state.start_time
+        elapsed = max((time.monotonic_ns() - started_ns) / 1_000_000_000, 0.0)
+        completion_tokens = estimate_tokens(req_state.full_response)
+        tokens_per_second = output_tokens_per_second(completion_tokens, elapsed)
         print(f"✅ [{request_id}] Inference completed in {elapsed:.2f}s")
+        print(
+            f"📈 [{request_id}] Output speed: {tokens_per_second:.2f} tokens/s "
+            f"({completion_tokens} completion tokens)"
+        )
         print(f"[{request_id}] Response: {req_state.full_response!r}")
         
         return req_state
