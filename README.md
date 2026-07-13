@@ -99,6 +99,12 @@ ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w8a8-rk3588
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-3b-instruct:w4a16-rk3576
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-3b-instruct:w8a8-rk3576
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-3b-instruct:w8a8-rk3588
+ghcr.io/hanzo-huang/rkllm-docker/qwen3-1.7b:w4a16-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/qwen3-1.7b:w8a8-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/qwen3-1.7b:w8a8-rk3588
+ghcr.io/hanzo-huang/rkllm-docker/qwen3-4b:w4a16-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/qwen3-4b:w8a8-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/qwen3-4b:w8a8-rk3588
 ```
 
 The `env-latest` image contains the runtime and API server, but no model. Use
