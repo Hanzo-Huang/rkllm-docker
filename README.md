@@ -85,6 +85,7 @@ Set `API_FORMAT=both` to expose the OpenAI-compatible and
 Ollama-compatible endpoints at the same time.
 
 Use `w8a8-rk3576` instead of `w4a16-rk3576` to run the W8A8 variant.
+Use `w8a8-rk3588` to run the W8A8 model built for RK3588.
 Use `qwen2.5-3b-instruct` instead of `qwen2.5-1.5b-instruct` to run the
 3B model.
 
@@ -94,8 +95,10 @@ Use `qwen2.5-3b-instruct` instead of `qwen2.5-1.5b-instruct` to run the
 ghcr.io/hanzo-huang/rkllm-docker:env-latest
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w4a16-rk3576
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w8a8-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w8a8-rk3588
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-3b-instruct:w4a16-rk3576
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-3b-instruct:w8a8-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-3b-instruct:w8a8-rk3588
 ```
 
 The `env-latest` image contains the runtime and API server, but no model. Use
