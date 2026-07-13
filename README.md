@@ -93,6 +93,9 @@ Use `qwen2.5-3b-instruct` instead of `qwen2.5-1.5b-instruct` to run the
 
 ```text
 ghcr.io/hanzo-huang/rkllm-docker:env-latest
+ghcr.io/hanzo-huang/rkllm-docker/gemma-3-4b-it:w4a16-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/gemma-3-4b-it:w8a8-rk3576
+ghcr.io/hanzo-huang/rkllm-docker/gemma-3-4b-it:w8a8-rk3588
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w4a16-rk3576
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w8a8-rk3576
 ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w8a8-rk3588
