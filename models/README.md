@@ -46,9 +46,8 @@ To add a model:
 2. Run **Build model images** with scope `model` and enter `model_id` to
    build every variant for that model.
 3. For private or temporary URLs, leave `MODEL_URL` empty and provide
-   `model_url` to the single-image **Build model image** workflow. A
-   `MODEL_DOWNLOAD_TOKEN` Actions secret is sent as a Bearer token when
-   configured.
+   `model_url` using the `variant` scope. A `MODEL_DOWNLOAD_TOKEN` Actions
+   secret is sent as a Bearer token when configured.
 
 After publishing a new environment image, run **Build model images** with
 scope `all` to rebuild every model package from `env-latest`. Use `base_tag` to
