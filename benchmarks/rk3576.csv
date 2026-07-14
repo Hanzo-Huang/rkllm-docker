@@ -1,0 +1,11 @@
+name,model,size,quantization,platform,steady_ram_gb,output_tokens_per_second
+Qwen2.5-1.5B-Instruct-w4a16-RK3576,Qwen2.5-1.5B-Instruct,1.5B,W4A16,RK3576,1.6,19.55
+Qwen2.5-1.5B-Instruct-w8a8-RK3576,Qwen2.5-1.5B-Instruct,1.5B,W8A8,RK3576,2.2,13.99
+Qwen2.5-3B-Instruct-w4a16-RK3576,Qwen2.5-3B-Instruct,3B,W4A16,RK3576,2.5,11.45
+Qwen2.5-3B-Instruct-w8a8-RK3576,Qwen2.5-3B-Instruct,3B,W8A8,RK3576,3.8,6.21
+Qwen3-1.7B-w4a16-RK3576,Qwen3-1.7B,1.7B,W4A16,RK3576,2.0,13.31
+Qwen3-1.7B-w8a8-RK3576,Qwen3-1.7B,1.7B,W8A8,RK3576,2.7,12.57
+Qwen3-4B-w4a16-RK3576,Qwen3-4B,4B,W4A16,RK3576,3.4,8.30
+Qwen3-4B-w8a8-RK3576,Qwen3-4B,4B,W8A8,RK3576,5.2,5.85
+gemma-3-4b-it-w4a16-RK3576,gemma-3-4b-it,4B,W4A16,RK3576,4.0,8.40
+gemma-3-4b-it-w8a8-RK3576,gemma-3-4b-it,4B,W8A8,RK3576,5.5,5.33
