@@ -223,8 +223,8 @@ Then run the model build workflow:
 
 To rebuild every model after updating the environment image, run the same
 workflow with scope `all`. The workflow discovers all committed `model.env`
-files automatically. Use **Build model image** when you only need to rebuild
-one specific variant or override its download URL.
+files automatically. Select scope `variant` when you only need to rebuild one
+specific variant or override its download URL or published image tag.
 
 The published image will be:
 
