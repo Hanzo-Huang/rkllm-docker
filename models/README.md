@@ -43,10 +43,16 @@ Use a direct download URL for `MODEL_URL`. For Hugging Face files, this means
 To add a model:
 
 1. Add `<model-id>/<variant>/model.env` or copy an existing variant.
-2. Run **Build model image** with both `model_id` and `variant`.
+2. Run **Build model images** with scope `model` and enter `model_id` to
+   build every variant for that model.
 3. For private or temporary URLs, leave `MODEL_URL` empty and provide
-   `model_url` to the workflow. A `MODEL_DOWNLOAD_TOKEN` Actions secret is sent
-   as a Bearer token when configured.
+   `model_url` to the single-image **Build model image** workflow. A
+   `MODEL_DOWNLOAD_TOKEN` Actions secret is sent as a Bearer token when
+   configured.
+
+After publishing a new environment image, run **Build model images** with
+scope `all` to rebuild every model package from `env-latest`. Use `base_tag` to
+build against a different environment image tag.
 
 Images use the model as the repository and the variant as the tag:
 

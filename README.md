@@ -217,9 +217,14 @@ MODEL_SHA256=
 Then run the model build workflow:
 
 - Commit and push the new `model.env`.
-- Open `Actions > Build model image > Run workflow`.
-- Enter `model_id` and `variant` using the directory names.
+- Open `Actions > Build model images > Run workflow`.
+- Select scope `model` and enter `model_id` to build all of its variants.
 - Keep `base_tag=env-latest` unless you need a different runtime image.
+
+To rebuild every model after updating the environment image, run the same
+workflow with scope `all`. The workflow discovers all committed `model.env`
+files automatically. Use **Build model image** when you only need to rebuild
+one specific variant or override its download URL.
 
 The published image will be:
 

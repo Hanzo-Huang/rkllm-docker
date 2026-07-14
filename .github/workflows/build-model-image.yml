@@ -1,6 +1,35 @@
 name: Build model image
 
 on:
+  workflow_call:
+    inputs:
+      model_id:
+        description: Model directory name under models/
+        required: true
+        type: string
+      variant:
+        description: Variant directory and Docker tag
+        required: true
+        type: string
+      model_url:
+        description: Optional download URL overriding MODEL_URL in model.env
+        required: false
+        default: ""
+        type: string
+      base_tag:
+        description: Environment image tag
+        required: false
+        default: env-latest
+        type: string
+      image_tag:
+        description: Published model image tag (defaults to variant)
+        required: false
+        default: ""
+        type: string
+    secrets:
+      MODEL_DOWNLOAD_TOKEN:
+        description: Optional Bearer token for downloading private models
+        required: false
   workflow_dispatch:
     inputs:
       model_id:

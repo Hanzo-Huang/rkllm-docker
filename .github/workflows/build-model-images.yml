@@ -1,0 +1,101 @@
+name: Build model images
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Models to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - model
+      model_id:
+        description: Model directory name (required when scope is model)
+        required: false
+        type: string
+      base_tag:
+        description: Environment image tag used as the model image base
+        required: true
+        default: env-latest
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: model-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.models.outputs.matrix }}
+      count: ${{ steps.models.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Discover model variants
+        id: models
+        shell: bash
+        env:
+          BUILD_SCOPE: ${{ inputs.scope }}
+          INPUT_MODEL_ID: ${{ inputs.model_id }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$BUILD_SCOPE" == "model" ]]; then
+            [[ "$INPUT_MODEL_ID" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
+            test -d "models/$INPUT_MODEL_ID"
+          elif [[ "$BUILD_SCOPE" != "all" ]]; then
+            echo "Unsupported build scope: $BUILD_SCOPE" >&2
+            exit 1
+          fi
+
+          entries='[]'
+          while IFS= read -r definition; do
+            relative="${definition#models/}"
+            model_id="${relative%%/*}"
+            remainder="${relative#*/}"
+            variant="${remainder%%/*}"
+
+            if [[ "$BUILD_SCOPE" == "model" && "$model_id" != "$INPUT_MODEL_ID" ]]; then
+              continue
+            fi
+
+            entries="$(
+              jq -c \
+                --arg model_id "$model_id" \
+                --arg variant "$variant" \
+                '. + [{model_id: $model_id, variant: $variant}]' \
+                <<< "$entries"
+            )"
+          done < <(find models -mindepth 3 -maxdepth 3 -name model.env -print | sort)
+
+          count="$(jq 'length' <<< "$entries")"
+          if [[ "$count" -eq 0 ]]; then
+            echo "No model definitions found for the requested scope." >&2
+            exit 1
+          fi
+
+          echo "Discovered $count model variants:"
+          jq -r '.[] | "- \(.model_id):\(.variant)"' <<< "$entries"
+          echo "matrix=$(jq -c '{include: .}' <<< "$entries")" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.model_id }}:${{ matrix.variant }}
+    needs: discover
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    uses: ./.github/workflows/build-model-image.yml
+    with:
+      model_id: ${{ matrix.model_id }}
+      variant: ${{ matrix.variant }}
+      base_tag: ${{ inputs.base_tag }}
+    secrets: inherit
