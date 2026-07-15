@@ -31,7 +31,7 @@ RUN ldconfig \
     && rm -rf /tmp/wheels /tmp/requirements.txt
 
 WORKDIR /app
-COPY app/fastapi_server_llm.py /app/fastapi_server_llm.py
+COPY app/ /app/app/
 COPY scripts/fix_freq*.sh /app/
 COPY docker/entrypoint.sh /app/docker-entrypoint.sh
 
