@@ -19,7 +19,7 @@ if [ ! -f "${MODEL_PATH}" ]; then
 fi
 
 shift || true
-exec python3 /app/fastapi_server_llm.py \
+exec python3 -m app.fastapi_server_llm \
     --rkllm_model_path "${MODEL_PATH}" \
     --target_platform "${TARGET_PLATFORM}" \
     --port "${PORT:-8001}" \
