@@ -4,24 +4,31 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Models to build
+        description: Model configurations to build
         required: true
         default: all
         type: choice
         options:
           - all
           - model
-          - variant
+          - configuration
       model_id:
-        description: Model directory name (required for model or variant scope)
+        description: Model directory name (required for model or configuration scope)
         required: false
         type: string
-      variant:
-        description: Variant directory name (required when scope is variant)
+      platform:
+        description: Platform directory name (required for configuration scope)
+        required: false
+        type: choice
+        options:
+          - rk3576
+          - rk3588
+      quantization:
+        description: Quantization env name without .env (required for configuration scope)
         required: false
         type: string
       model_url:
-        description: Optional download URL override for variant scope
+        description: Optional download URL override for configuration scope
         required: false
         type: string
       base_tag:
@@ -30,7 +37,7 @@ on:
         default: env-latest
         type: string
       image_tag:
-        description: Optional published image tag override for variant scope
+        description: Optional published image tag override for configuration scope
         required: false
         type: string
 
@@ -51,33 +58,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Discover model variants
+      - name: Discover model configurations
         id: models
         shell: bash
         env:
           BUILD_SCOPE: ${{ inputs.scope }}
           INPUT_MODEL_ID: ${{ inputs.model_id }}
-          INPUT_VARIANT: ${{ inputs.variant }}
+          INPUT_PLATFORM: ${{ inputs.platform }}
+          INPUT_QUANTIZATION: ${{ inputs.quantization }}
           INPUT_MODEL_URL: ${{ inputs.model_url }}
           INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
 
-          if [[ "$BUILD_SCOPE" == "model" || "$BUILD_SCOPE" == "variant" ]]; then
+          if [[ "$BUILD_SCOPE" == "model" || "$BUILD_SCOPE" == "configuration" ]]; then
             [[ "$INPUT_MODEL_ID" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
             test -d "models/$INPUT_MODEL_ID"
           fi
 
-          if [[ "$BUILD_SCOPE" == "variant" ]]; then
-            [[ "$INPUT_VARIANT" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
-            test -f "models/$INPUT_MODEL_ID/$INPUT_VARIANT/model.env"
+          if [[ "$BUILD_SCOPE" == "configuration" ]]; then
+            [[ "$INPUT_PLATFORM" =~ ^rk(3576|3588)$ ]]
+            [[ "$INPUT_QUANTIZATION" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
+            test -f "models/$INPUT_MODEL_ID/$INPUT_PLATFORM/$INPUT_QUANTIZATION.env"
           elif [[ "$BUILD_SCOPE" != "all" && "$BUILD_SCOPE" != "model" ]]; then
             echo "Unsupported build scope: $BUILD_SCOPE" >&2
             exit 1
           fi
 
-          if [[ "$BUILD_SCOPE" != "variant" && ( -n "$INPUT_MODEL_URL" || -n "$INPUT_IMAGE_TAG" ) ]]; then
-            echo "model_url and image_tag overrides require variant scope." >&2
+          if [[ "$BUILD_SCOPE" != "configuration" && ( -n "$INPUT_MODEL_URL" || -n "$INPUT_IMAGE_TAG" ) ]]; then
+            echo "model_url and image_tag overrides require configuration scope." >&2
             exit 1
           fi
 
@@ -86,37 +95,40 @@ jobs:
             relative="${definition#models/}"
             model_id="${relative%%/*}"
             remainder="${relative#*/}"
-            variant="${remainder%%/*}"
+            platform="${remainder%%/*}"
+            quantization="${remainder##*/}"
+            quantization="${quantization%.env}"
 
             if [[ "$BUILD_SCOPE" == "model" && "$model_id" != "$INPUT_MODEL_ID" ]]; then
               continue
             fi
-            if [[ "$BUILD_SCOPE" == "variant" && ( "$model_id" != "$INPUT_MODEL_ID" || "$variant" != "$INPUT_VARIANT" ) ]]; then
+            if [[ "$BUILD_SCOPE" == "configuration" && ( "$model_id" != "$INPUT_MODEL_ID" || "$platform" != "$INPUT_PLATFORM" || "$quantization" != "$INPUT_QUANTIZATION" ) ]]; then
               continue
             fi
 
             entries="$(
               jq -c \
                 --arg model_id "$model_id" \
-                --arg variant "$variant" \
-                '. + [{model_id: $model_id, variant: $variant}]' \
+                --arg platform "$platform" \
+                --arg quantization "$quantization" \
+                '. + [{model_id: $model_id, platform: $platform, quantization: $quantization}]' \
                 <<< "$entries"
             )"
-          done < <(find models -mindepth 3 -maxdepth 3 -name model.env -print | sort)
+          done < <(find models -mindepth 3 -maxdepth 3 -type f -name '*.env' -print | sort)
 
           count="$(jq 'length' <<< "$entries")"
           if [[ "$count" -eq 0 ]]; then
-            echo "No model definitions found for the requested scope." >&2
+            echo "No model configurations found for the requested scope." >&2
             exit 1
           fi
 
-          echo "Discovered $count model variants:"
-          jq -r '.[] | "- \(.model_id):\(.variant)"' <<< "$entries"
+          echo "Discovered $count model configurations:"
+          jq -r '.[] | "- \(.model_id):\(.quantization)-\(.platform)"' <<< "$entries"
           echo "matrix=$(jq -c '{include: .}' <<< "$entries")" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
 
   build:
-    name: ${{ matrix.model_id }}:${{ matrix.variant }}
+    name: ${{ matrix.model_id }}:${{ matrix.quantization }}-${{ matrix.platform }}
     needs: discover
     runs-on: ubuntu-24.04
     strategy:
@@ -131,14 +143,16 @@ jobs:
         shell: bash
         env:
           INPUT_MODEL_ID: ${{ matrix.model_id }}
-          INPUT_VARIANT: ${{ matrix.variant }}
+          INPUT_PLATFORM: ${{ matrix.platform }}
+          INPUT_QUANTIZATION: ${{ matrix.quantization }}
           INPUT_MODEL_URL: ${{ inputs.model_url }}
           INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
           [[ "$INPUT_MODEL_ID" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
-          [[ "$INPUT_VARIANT" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
-          definition="models/$INPUT_MODEL_ID/$INPUT_VARIANT/model.env"
+          [[ "$INPUT_PLATFORM" =~ ^rk(3576|3588)$ ]]
+          [[ "$INPUT_QUANTIZATION" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
+          definition="models/$INPUT_MODEL_ID/$INPUT_PLATFORM/$INPUT_QUANTIZATION.env"
           test -f "$definition"
           set -a
           source "$definition"
@@ -146,15 +160,17 @@ jobs:
           MODEL_URL="${INPUT_MODEL_URL:-${MODEL_URL:-}}"
           test -n "$MODEL_URL"
           [[ "$MODEL_FILE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.rkllm$ ]]
-          [[ "$TARGET_PLATFORM" =~ ^rk(3576|3588|3588s)$ ]]
+          [[ "${RKLLM_TOOLKIT_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           base_image="ghcr.io/${GITHUB_REPOSITORY,,}"
           image="$base_image/$INPUT_MODEL_ID"
-          tag="${INPUT_IMAGE_TAG:-$INPUT_VARIANT}"
+          default_tag="$INPUT_QUANTIZATION-$INPUT_PLATFORM"
+          tag="${INPUT_IMAGE_TAG:-$default_tag}"
           [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
           {
             echo "url=$MODEL_URL"
             echo "file=$MODEL_FILE"
-            echo "platform=$TARGET_PLATFORM"
+            echo "platform=$INPUT_PLATFORM"
+            echo "toolkit_version=$RKLLM_TOOLKIT_VERSION"
             echo "sha256=${MODEL_SHA256:-}"
             echo "base_image=$base_image"
             echo "image=$image"
@@ -170,6 +186,7 @@ jobs:
           MODEL_DOWNLOAD_TOKEN: ${{ secrets.MODEL_DOWNLOAD_TOKEN }}
         run: |
           set -euo pipefail
+          mkdir -p models/.build
           args=(--fail --location --retry 3 --output "models/.build/$MODEL_FILE")
           if [[ -n "$MODEL_DOWNLOAD_TOKEN" ]]; then
             args+=(--header "Authorization: Bearer $MODEL_DOWNLOAD_TOKEN")
@@ -199,11 +216,12 @@ jobs:
           push: true
           build-args: |
             BASE_IMAGE=${{ steps.model.outputs.base_image }}:${{ inputs.base_tag }}
-            MODEL_ID=${{ matrix.model_id }}:${{ matrix.variant }}
+            MODEL_ID=${{ matrix.model_id }}:${{ matrix.quantization }}-${{ matrix.platform }}
             MODEL_FILE=${{ steps.model.outputs.file }}
-            TARGET_PLATFORM=${{ steps.model.outputs.platform }}
+            TARGET_PLATFORM=${{ matrix.platform }}
+            RKLLM_TOOLKIT_VERSION=${{ steps.model.outputs.toolkit_version }}
           tags: |
             ${{ steps.model.outputs.image }}:${{ steps.model.outputs.tag }}
             ${{ steps.model.outputs.image }}:${{ steps.model.outputs.tag }}-${{ github.sha }}
-          cache-from: type=gha,scope=rkllm-${{ matrix.model_id }}-${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=rkllm-${{ matrix.model_id }}-${{ matrix.variant }}
+          cache-from: type=gha,scope=rkllm-${{ matrix.model_id }}-${{ matrix.quantization }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=rkllm-${{ matrix.model_id }}-${{ matrix.quantization }}-${{ matrix.platform }}

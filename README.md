@@ -42,6 +42,15 @@ Other Rockchip and embedded AI developers may use it as a reference, but the rep
 - [x] Model-image builds with optional SHA-256 verification
 - [x] RK3576 performance and memory benchmarks
 
+## Bundled Versions
+
+- RKLLM runtime: `v1.2.3`
+- RKNN Toolkit Lite 2 wheel: `v2.3.2`
+
+The RKLLM Toolkit version used to convert a model is stored in that model's
+env definition and published as `io.rkllm.toolkit.version` on its image. This
+allows models produced by different toolkit versions to coexist.
+
 ## Quick Start
 
 ### Requirements
@@ -157,31 +166,6 @@ sudo docker run --rm -d \
 
 Replace the host path, file name, and platform with values for your device. The container exits with a clear error if `MODEL_PATH` does not exist.
 
-## Docker Compose
-
-Clone the repository and start a published model image:
-
-```bash
-git clone https://github.com/Hanzo-Huang/rkllm-docker.git
-cd rkllm-docker
-sudo env \
-  RKLLM_IMAGE=ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w4a16-rk3576 \
-  docker compose up -d
-```
-
-To use a host-mounted model, update `MODEL_PATH` and `TARGET_PLATFORM` in `compose.mount-model.yaml`, then run:
-
-```bash
-sudo env MODEL_DIR=/absolute/path/to/models \
-  docker compose -f compose.mount-model.yaml up -d
-```
-
-View startup logs:
-
-```bash
-sudo docker compose logs -f
-```
-
 ## Configuration
 
 | Variable | Default | Allowed values | Purpose |
@@ -192,7 +176,7 @@ sudo docker compose logs -f
 | `PORT` | `8001` | TCP port | Set the HTTP server port inside the container. |
 | `API_FORMAT` | `openai` | `openai`, `ollama`, `both` | Enable one or both API formats. |
 
-Set variables with `docker run -e NAME=value` or in the Compose `environment` section.
+Set variables with `docker run -e NAME=value`.
 
 ### API Endpoints
 
@@ -274,16 +258,14 @@ The machine-readable results are in [`benchmarks/rk3576.csv`](benchmarks/rk3576.
 
 ```text
 .
-├── app/                      FastAPI server and generation metrics
+├── app/                      Single FastAPI server script
 ├── benchmarks/               Measured speed and memory data
 ├── docker/                   Runtime Dockerfile, model Dockerfile, entrypoint
-├── models/<model>/<variant>/ Model download and platform definitions
+├── models/<model>/<platform>/<quantization>.env
+│                             Model download definitions
 ├── runtime/                  ARM64 RKLLM/RKNN libraries and Python wheel
 ├── scripts/                  Platform detection and frequency tuning
-├── tests/                    Python tests
-├── .github/workflows/        Environment and model image builds
-├── compose.yaml              Run an image with a bundled model
-└── compose.mount-model.yaml  Run the environment with a mounted model
+└── .github/workflows/        Environment and model image builds
 ```
 
 ## Development
@@ -315,23 +297,17 @@ sudo docker run --rm -it \
 
 Changes under `app/`, `docker/`, `runtime/`, `scripts/`, or `requirements.txt` require rebuilding the runtime image.
 
-### Run Tests
-
-```bash
-python -m pip install pytest
-python -m pytest -q
-```
-
 ### Add a Model Image
 
-1. Create `models/<model-id>/<quantization>-<platform>/model.env`.
-2. Add the direct model URL, file name, target platform, and optional checksum.
+1. Create `models/<model-id>/<platform>/<quantization>.env`.
+2. Add the direct model URL, file name, and optional checksum. The platform is
+   derived from its directory.
 3. Commit the definition and run **Actions → Build model images → Run workflow**.
 
 ```dotenv
 MODEL_URL=https://huggingface.co/<account>/<repo>/resolve/main/path/model.rkllm
 MODEL_FILE=model.rkllm
-TARGET_PLATFORM=rk3576
+RKLLM_TOOLKIT_VERSION=1.2.3
 MODEL_SHA256=
 ```
 

@@ -52,9 +52,9 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ github.sha }}
+            RKLLM_RUNTIME_VERSION=1.2.3
           tags: |
             ${{ steps.image.outputs.name }}:env-latest
             ${{ steps.image.outputs.name }}:env-${{ github.sha }}
           cache-from: type=gha,scope=rkllm-env
           cache-to: type=gha,mode=max,scope=rkllm-env
-

@@ -23,10 +23,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import uvicorn
 import argparse
-try:
-    from app.metrics import output_tokens_per_second
-except ImportError:  # Support running this file directly from the app directory.
-    from metrics import output_tokens_per_second
+
+
+def output_tokens_per_second(completion_tokens: int, elapsed_seconds: float) -> float:
+    """Return completion output speed, guarding against empty durations."""
+    if elapsed_seconds <= 0:
+        return 0.0
+    return completion_tokens / elapsed_seconds
 
 # ==================== System Library Preloading ====================
 def preload_libraries():
@@ -105,10 +108,8 @@ class RKLLMParam(ctypes.Structure):
         ("mirostat_tau", ctypes.c_float),
         ("mirostat_eta", ctypes.c_float),
         ("skip_special_token", ctypes.c_bool),
+        ("ignore_eos_token", ctypes.c_bool),
         ("is_async", ctypes.c_bool),
-        ("img_start", ctypes.c_char_p),
-        ("img_end", ctypes.c_char_p),
-        ("img_content", ctypes.c_char_p),
         ("extend_param", RKLLMExtendParam),
     ]
 
@@ -130,13 +131,41 @@ class RKLLMInferParam(ctypes.Structure):
         ("mode", ctypes.c_int),
         ("lora_params", ctypes.c_void_p),
         ("prompt_cache_params", ctypes.c_void_p),
-        ("keep_history", ctypes.c_int)
+        ("sampling_params", ctypes.c_void_p),
+        ("keep_history", ctypes.c_int),
+        ("max_new_tokens", ctypes.c_int32),
+    ]
+
+class RKLLMResultLastHiddenLayer(ctypes.Structure):
+    _fields_ = [
+        ("hidden_states", ctypes.POINTER(ctypes.c_float)),
+        ("embd_size", ctypes.c_int),
+        ("num_tokens", ctypes.c_int),
+    ]
+
+class RKLLMResultLogits(ctypes.Structure):
+    _fields_ = [
+        ("logits", ctypes.POINTER(ctypes.c_float)),
+        ("vocab_size", ctypes.c_int),
+        ("num_tokens", ctypes.c_int),
+    ]
+
+class RKLLMPerfStat(ctypes.Structure):
+    _fields_ = [
+        ("prefill_time_ms", ctypes.c_float),
+        ("prefill_tokens", ctypes.c_int),
+        ("generate_time_ms", ctypes.c_float),
+        ("generate_tokens", ctypes.c_int),
+        ("memory_usage_mb", ctypes.c_float),
     ]
 
 class RKLLMResult(ctypes.Structure):
     _fields_ = [
         ("text", ctypes.c_char_p),
-        ("token_id", ctypes.c_int),
+        ("token_id", ctypes.c_int32),
+        ("last_hidden_layer", RKLLMResultLastHiddenLayer),
+        ("logits", RKLLMResultLogits),
+        ("perf", RKLLMPerfStat),
     ]
 
 # ==================== Pydantic Model Definitions ====================
@@ -314,6 +343,19 @@ def callback_impl(result, userdata, state):
 callback_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(RKLLMResult), ctypes.c_void_p, ctypes.c_int)
 callback = callback_type(callback_impl)
 
+class RKLLMCallback(ctypes.Structure):
+    _fields_ = [
+        ("result_callback", callback_type),
+        ("result_userdata", ctypes.c_void_p),
+        ("tokenizer_callback", ctypes.c_void_p),
+        ("tokenizer_userdata", ctypes.c_void_p),
+        ("embed_callback", ctypes.c_void_p),
+        ("embed_userdata", ctypes.c_void_p),
+    ]
+
+# Keep the callback structure alive for as long as the native runtime may use it.
+rkllm_callback = RKLLMCallback(result_callback=callback)
+
 # ==================== RKLLM Model Manager ====================
 class RKLLMModel:
     """RKLLM model manager class"""
@@ -353,10 +395,8 @@ class RKLLMModel:
                 rkllm_param.mirostat_tau = 5.0
                 rkllm_param.mirostat_eta = 0.1
                 rkllm_param.skip_special_token = True
+                rkllm_param.ignore_eos_token = False
                 rkllm_param.is_async = False
-                rkllm_param.img_start = ctypes.c_char_p(b"")
-                rkllm_param.img_end = ctypes.c_char_p(b"")
-                rkllm_param.img_content = ctypes.c_char_p(b"")
                 
                 # Extended parameters - critical settings to avoid GGML errors
                 rkllm_param.extend_param.base_domain_id = 0
@@ -376,12 +416,16 @@ class RKLLMModel:
                 rkllm_init.argtypes = [
                     ctypes.POINTER(ctypes.c_void_p),
                     ctypes.POINTER(RKLLMParam),
-                    callback_type
+                    ctypes.POINTER(RKLLMCallback),
                 ]
                 rkllm_init.restype = ctypes.c_int
                 
                 # Call initialization
-                ret = rkllm_init(ctypes.byref(self.handle), ctypes.byref(rkllm_param), callback)
+                ret = rkllm_init(
+                    ctypes.byref(self.handle),
+                    ctypes.byref(rkllm_param),
+                    ctypes.byref(rkllm_callback),
+                )
                 
                 if ret != 0:
                     raise RuntimeError(f"RKLLM initialization failed with error code: {ret}")
@@ -429,7 +473,9 @@ class RKLLMModel:
                 infer_param.mode = RKLLMInferMode.RKLLM_INFER_GENERATE
                 infer_param.lora_params = None
                 infer_param.prompt_cache_params = None
+                infer_param.sampling_params = None
                 infer_param.keep_history = 0
+                infer_param.max_new_tokens = max_tokens or self.default_max_tokens
                 
                 # Prepare user data
                 userdata_ptr = None
@@ -853,6 +899,8 @@ async def root():
         "status": "running",
         "model": args.rkllm_model_path.split('/')[-1],
         "platform": args.target_platform,
+        "rkllm_runtime_version": os.environ.get("RKLLM_RUNTIME_VERSION", "unknown"),
+        "rkllm_toolkit_version": os.environ.get("RKLLM_TOOLKIT_VERSION", "unknown"),
         "version": "1.0.0",
         "api_format": config.api_format,
         "endpoints": endpoints
