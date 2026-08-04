@@ -17,6 +17,9 @@ permissions:
   contents: read
   packages: write
 
+env:
+  RKLLM_RUNTIME_VERSION: 1.2.3
+
 concurrency:
   group: env-image-${{ github.ref }}
   cancel-in-progress: true
@@ -52,9 +55,10 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ github.sha }}
-            RKLLM_RUNTIME_VERSION=1.2.3
+            RKLLM_RUNTIME_VERSION=${{ env.RKLLM_RUNTIME_VERSION }}
           tags: |
             ${{ steps.image.outputs.name }}:env-latest
+            ${{ steps.image.outputs.name }}:${{ env.RKLLM_RUNTIME_VERSION }}
             ${{ steps.image.outputs.name }}:env-${{ github.sha }}
           cache-from: type=gha,scope=rkllm-env
           cache-to: type=gha,mode=max,scope=rkllm-env

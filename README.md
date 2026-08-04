@@ -135,6 +135,15 @@ The model-free runtime image is:
 ghcr.io/hanzo-huang/rkllm-docker:env-latest
 ```
 
+Released runtime environments also use the RKLLM runtime version as their tag:
+
+```text
+ghcr.io/hanzo-huang/rkllm-docker:1.2.3
+```
+
+Model image tags remain `<quantization>-<platform>` and do not include the
+runtime version.
+
 Model licenses and usage restrictions are determined by their original authors. Review them before deployment or redistribution.
 
 ## Test Matrix
