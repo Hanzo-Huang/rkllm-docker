@@ -17,3 +17,4 @@ dist/
 # model-image workflow. Keep only model metadata in Git.
 models/.build/
 models/**/*.rkllm
+models/**/*.rknn

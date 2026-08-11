@@ -1,79 +1,74 @@
 # Model definitions
 
-Definitions are organized by model, then target platform. Each quantization is
-an independent env file:
+Model metadata is organized as:
 
 ```text
-models/
-  gemma-3-4b-it/
-    rk3576/
-      w4a16.env
-      w8a8.env
-    rk3588/
-      w8a8.env
-  qwen2.5-1.5b-instruct/
-    rk3576/
-      w4a16.env
-      w8a8.env
-    rk3588/
-      w8a8.env
-  qwen2.5-3b-instruct/
-    rk3576/
-      w4a16.env
-      w8a8.env
-    rk3588/
-      w8a8.env
-  qwen3-1.7b/
-    rk3576/
-      w4a16.env
-      w8a8.env
-    rk3588/
-      w8a8.env
-  qwen3-4b/
-    rk3576/
-      w4a16.env
-      w8a8.env
-    rk3588/
-      w8a8.env
+models/<llm-or-vlm>/<model-id>/<platform>/<quantization>.env
 ```
 
-This layout makes the hardware boundary visible before the quantization choice.
-It also keeps every downloadable artifact independently configurable without
-repeating the platform inside the env file.
+LLM definitions download one `.rkllm` file. VLM definitions download a paired
+`.rkllm` language model and `.rknn` vision encoder for the same platform.
 
-Each env file contains:
+An LLM definition contains:
 
 ```dotenv
-MODEL_URL=https://example.com/model.rkllm
-MODEL_FILE=model.rkllm
+MODEL_URL=https://example.com/Qwen3-4B_RK3576_w8a8.rkllm
+MODEL_FILE=Qwen3-4B_RK3576_w8a8.rkllm
 RKLLM_TOOLKIT_VERSION=1.2.3
 MODEL_SHA256=optional-lowercase-sha256
 ```
 
-`RKLLM_TOOLKIT_VERSION` is the RKLLM Toolkit version that produced that exact
-`.rkllm` file. Keep it in each quantization env because models built with
-different toolkit versions may require different runtime compatibility.
+A complete VLM definition contains both model artifacts and the vision runtime
+settings:
 
-`MODEL_URL` must be a direct download URL. For Hugging Face, use
-`/resolve/main/...`, not a `/blob/main/...` browser page. Model binaries are
-ignored by Git and downloaded only while an image is built.
+```dotenv
+MODEL_KIND=vlm
+MODEL_URL=https://example.com/Qwen3.5-4B_RK3576_w8a8.rkllm
+MODEL_FILE=Qwen3.5-4B_RK3576_w8a8.rkllm
+VISION_MODEL_URL=https://example.com/Qwen3.5-4B_vision_RK3576.rknn
+VISION_MODEL_FILE=Qwen3.5-4B_vision_RK3576.rknn
+RKLLM_TOOLKIT_VERSION=1.3.0
+MODEL_SHA256=optional-lowercase-sha256
+VISION_MODEL_SHA256=optional-lowercase-sha256
+VLM_IMAGE_SIZE=392
+```
 
-## Add a model configuration
-
-1. Add `models/<model-id>/<platform>/<quantization>.env`.
-2. Run **Build model images** with `configuration` scope and select the model,
-   platform, and quantization.
-3. For private or temporary URLs, leave `MODEL_URL` empty and pass `model_url`
-   to that workflow run. A `MODEL_DOWNLOAD_TOKEN` Actions secret is sent as a
-   Bearer token when configured.
-
-Use `model` scope to build every platform and quantization for one model. Use
-`all` after publishing a new environment image.
-
-Published image tags remain `<quantization>-<platform>`:
+`MODEL_FILE` and `VISION_MODEL_FILE` must exactly match the final filename in
+their corresponding URL. The converted artifacts in this repository put the
+platform before the quantization, for example:
 
 ```text
-ghcr.io/<owner>/<repo>/gemma-3-4b-it:w4a16-rk3576
-ghcr.io/<owner>/<repo>/gemma-3-4b-it:w8a8-rk3576
-ghcr.io/<owner>/<repo>/gemma-3-4b-it:w8a8-rk3588
+Qwen3-4B_RK3576_w8a8.rkllm
+Qwen3.5-4B_RK3576_w8a8.rkllm
+Qwen3.5-4B_vision_RK3576.rknn
+```
+
+Do not use the older form where the platform appears after the quantization,
+such as `Qwen3-4B_w8a8_RK3576.rkllm`.
+
+The runtime selects 2 RKNN cores for RK3576 and 3 for RK3588/RK3588S from
+`TARGET_PLATFORM`. The `.rkllm` and `.rknn` files must target the same platform.
+
+`RKLLM_TOOLKIT_VERSION` records the toolkit used to create the `.rkllm` file.
+`MODEL_URL` and `VISION_MODEL_URL` must be direct download URLs, such as
+Hugging Face `/resolve/main/...` URLs. Model binaries are downloaded during
+the image build and are not committed to Git.
+
+## Build model images
+
+Use **Actions → Build model images**:
+
+- `scope: configuration` builds one selected quantization and platform;
+- `scope: model` builds every definition for one model;
+- `scope: all` scans and builds every definition under `models/`;
+- `platform: all` builds the selected quantization on every available platform.
+
+For private or temporary artifacts, provide the URL override in the workflow
+and configure `MODEL_DOWNLOAD_TOKEN` as a repository secret when needed.
+
+Published images use separate namespaces and `<platform>-<quantization>` tags:
+
+```text
+ghcr.io/<owner>/<repo>/llm/<model-id>:rk3576-w4a16
+ghcr.io/<owner>/<repo>/vlm/<model-id>:rk3576-w4a16-g128
 ```

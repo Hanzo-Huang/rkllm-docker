@@ -2,22 +2,30 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
+ARG MODEL_KIND=llm
 ARG MODEL_ID
 ARG MODEL_FILE
+ARG VISION_MODEL_FILE
 ARG TARGET_PLATFORM=rk3576
 ARG RKLLM_TOOLKIT_VERSION
+ARG VLM_IMAGE_SIZE=392
 
-LABEL org.opencontainers.image.title="RKLLM model: ${MODEL_ID}" \
+LABEL org.opencontainers.image.title="RKLLM ${MODEL_KIND} model: ${MODEL_ID}" \
       io.rkllm.model.id="${MODEL_ID}" \
+      io.rkllm.model.kind="${MODEL_KIND}" \
       io.rkllm.model.file="${MODEL_FILE}" \
+      io.rkllm.vision-model.file="${VISION_MODEL_FILE}" \
       io.rkllm.target-platform="${TARGET_PLATFORM}" \
       io.rkllm.toolkit.version="${RKLLM_TOOLKIT_VERSION}"
 
-COPY models/.build/${MODEL_FILE} /app/models/${MODEL_FILE}
+COPY models/.build/ /app/models/
 
 ENV MODEL_PATH=/app/models/${MODEL_FILE} \
+    MODEL_KIND=${MODEL_KIND} \
+    VISION_MODEL_PATH=/app/models/${VISION_MODEL_FILE} \
     MODEL_ID=${MODEL_ID} \
     RKLLM_TOOLKIT_VERSION=${RKLLM_TOOLKIT_VERSION} \
-    TARGET_PLATFORM=${TARGET_PLATFORM}
+    TARGET_PLATFORM=${TARGET_PLATFORM} \
+    VLM_IMAGE_SIZE=${VLM_IMAGE_SIZE}
 
 CMD ["serve"]

@@ -1,6 +1,6 @@
 # RKLLM Docker
 
-A personal Docker test bed for running pre-converted RKLLM models on Rockchip NPUs through an OpenAI- or Ollama-compatible HTTP API.
+A personal Docker test bed for running pre-converted RKLLM LLM and VLM models on Rockchip NPUs through an OpenAI- or Ollama-compatible HTTP API.
 
 [![Build environment image](https://github.com/Hanzo-Huang/rkllm-docker/actions/workflows/build-env-image.yml/badge.svg)](https://github.com/Hanzo-Huang/rkllm-docker/actions/workflows/build-env-image.yml)
 ![Platform](https://img.shields.io/badge/platform-Linux%20ARM64-blue)
@@ -18,33 +18,23 @@ RKLLM Docker packages the Rockchip RKLLM runtime, RKNN Toolkit Lite, device setu
 
 ## Purpose
 
-Running an LLM on a Rockchip NPU requires matching ARM64 libraries, Python packages, device access, model files, and platform-specific settings. Rebuilding that environment for every experiment makes results harder to compare.
+Run pre-converted RKLLM models on Rockchip NPUs in reproducible ARM64
+containers. Each image bundles the matching runtime, model, platform setup,
+and HTTP server so models can be compared with one Docker command.
 
-This repository uses Docker to:
+## What's included
 
-- keep the RKLLM test environment repeatable;
-- compare models and quantizations on the same device;
-- test OpenAI- and Ollama-style API adapters;
-- switch model images without rebuilding the host environment;
-- record experimental speed and memory results.
+- ARM64 images for RK3576 and RK3588-family devices
+- LLM images with OpenAI-compatible and Ollama-compatible APIs
+- VLM images with OpenAI-compatible image chat
+- Streaming responses, host-mounted models, and optional SHA-256 checks
+- RK3576 benchmark data for the configured LLM models
 
-Other Rockchip and embedded AI developers may use it as a reference, but the repository does not promise broad hardware compatibility or production support.
-
-## Current Test Capabilities
-
-- [x] Prebuilt ARM64 runtime and model images on GitHub Container Registry
-- [x] Rockchip RK3576, RK3588, and RK3588S runtime configuration
-- [x] OpenAI-compatible chat completions
-- [x] Ollama-compatible generate and chat endpoints
-- [x] Streaming responses
-- [x] Host-mounted or image-bundled `.rkllm` models
-- [x] Automatic platform detection and optional NPU frequency tuning
-- [x] Model-image builds with optional SHA-256 verification
-- [x] RK3576 performance and memory benchmarks
+This is a personal testing project, not a production inference platform.
 
 ## Bundled Versions
 
-- RKLLM runtime: `v1.2.3`
+- RKLLM runtime: `v1.3.0`
 - RKNN Toolkit Lite 2 wheel: `v2.3.2`
 
 The RKLLM Toolkit version used to convert a model is stored in that model's
@@ -70,11 +60,15 @@ sudo docker run --rm -d \
   --privileged \
   -p 8001:8001 \
   -v /dev:/dev \
-  ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w4a16-rk3576
+  ghcr.io/hanzo-huang/rkllm-docker/llm/qwen2.5-1.5b-instruct:rk3576-w4a16
 ```
 
 > [!NOTE]
-> On RK3588, use an image tagged `w8a8-rk3588`. A model compiled for one target platform must not be used on a different target.
+> On RK3588, use an image tagged `rk3588-w8a8`. A model compiled for one target platform must not be used on a different target.
+
+All images listen on port `8001` inside the container. Use a different host
+port if running an LLM and VLM container at the same time, for example
+`-p 8002:8001`.
 
 ### 2. Check the server
 
@@ -92,7 +86,7 @@ Interactive API documentation is available at `http://localhost:8001/docs`.
 curl http://localhost:8001/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "rkllm-model",
+    "model": "qwen2.5-1.5b-instruct:rk3576-w4a16",
     "messages": [
       {"role": "user", "content": "Explain edge AI in one sentence."}
     ],
@@ -112,37 +106,33 @@ sudo docker stop rkllm
 Images follow this naming convention:
 
 ```text
-ghcr.io/hanzo-huang/rkllm-docker/<model>:<quantization>-<platform>
+ghcr.io/hanzo-huang/rkllm-docker/<llm-or-vlm>/<model>:<platform>-<quantization>
 ```
 
-| Model | RK3576 W4A16 | RK3576 W8A8 | RK3588 W8A8 |
+| LLM model | RK3576 W4A16 | RK3576 W8A8 | RK3588 W8A8 |
 | --- | :---: | :---: | :---: |
-| Gemma 3 4B IT | Yes | Yes | Yes |
-| Qwen2.5 1.5B Instruct | Yes | Yes | Yes |
-| Qwen2.5 3B Instruct | Yes | Yes | Yes |
-| Qwen3 1.7B | Yes | Yes | Yes |
-| Qwen3 4B | Yes | Yes | Yes |
+| Gemma 3 4B IT | ✅ | ✅ | ✅ |
+| Qwen2.5 1.5B Instruct | ✅ | ✅ | ✅ |
+| Qwen2.5 3B Instruct | ✅ | ✅ | ✅ |
+| Qwen3 1.7B | ✅ | ✅ | ✅ |
+| Qwen3 4B | ✅ | ✅ | ✅ |
 
-Example: replace the image in the Quick Start with Qwen3 4B for RK3588:
+VLM images use a separate package namespace and include both the RKLLM language
+model and RKNN vision encoder:
 
-```text
-ghcr.io/hanzo-huang/rkllm-docker/qwen3-4b:w8a8-rk3588
-```
+| VLM model | RK3576 W4A16-g128 | RK3576 W8A8 | RK3588 W8A8 |
+| --- | :---: | :---: | :---: |
+| Qwen3.5 2B | ✅ | ✅ | ✅ |
+| Qwen3.5 4B | ✅ | ✅ | ✅ |
 
-The model-free runtime image is:
-
-```text
-ghcr.io/hanzo-huang/rkllm-docker:env-latest
-```
-
-Released runtime environments also use the RKLLM runtime version as their tag:
+Example VLM image:
 
 ```text
-ghcr.io/hanzo-huang/rkllm-docker:1.2.3
+ghcr.io/hanzo-huang/rkllm-docker/vlm/qwen3.5-2b:rk3576-w4a16-g128
 ```
 
-Model image tags remain `<quantization>-<platform>` and do not include the
-runtime version.
+Model image tags use `<platform>-<quantization>`; runtime environment tags use
+the RKLLM runtime version, currently `1.3.0`.
 
 Model licenses and usage restrictions are determined by their original authors. Review them before deployment or redistribution.
 
@@ -152,8 +142,6 @@ Model licenses and usage restrictions are determined by their original authors. 
 | --- | --- | --- | --- |
 | RK3576 | Measured | W4A16 and W8A8 | Current benchmark data comes from this platform. |
 | RK3588 | Configured | W8A8 | Model definitions and platform tuning are included; no benchmark is published here. |
-| RK3588S | Code path only | Bring your own | Accepted by the server and mapped to RK3588 tuning; not validated as a separate test target. |
-| RK3568 | Out of scope | None | No runtime configuration, tuning script, model definition, or validation is included. |
 
 All published images target `linux/arm64`. They are not intended to perform NPU inference on x86-64, macOS, or Windows hosts.
 
@@ -175,15 +163,22 @@ sudo docker run --rm -d \
 
 Replace the host path, file name, and platform with values for your device. The container exits with a clear error if `MODEL_PATH` does not exist.
 
+For a VLM, mount both paired artifacts and set `MODEL_KIND=vlm` and
+`VISION_MODEL_PATH` to the mounted `.rknn` file. The LLM and vision artifacts
+must target the same platform and model conversion.
+
 ## Configuration
 
 | Variable | Default | Allowed values | Purpose |
 | --- | --- | --- | --- |
-| `MODEL_PATH` | `/app/models/model.rkllm` | Container file path | Select the model to load. |
+| `MODEL_PATH` | `/app/models/model.rkllm` | Container file path | Select the RKLLM model to load. |
+| `MODEL_KIND` | `llm` | `llm`, `vlm` | Select the native model backend. |
+| `MODEL_ID` | model-specific | Model name | Public model name returned by `/v1/models` and Ollama APIs. |
+| `VISION_MODEL_PATH` | empty | Container file path | RKNN vision encoder path for VLM images. |
 | `TARGET_PLATFORM` | `auto` | `auto`, `rk3576`, `rk3588`, `rk3588s` | Select or detect the target SoC. |
 | `RUN_FREQ_FIX` | `true` | `true`, `false` | Apply platform-specific frequency settings at startup. |
 | `PORT` | `8001` | TCP port | Set the HTTP server port inside the container. |
-| `API_FORMAT` | `openai` | `openai`, `ollama`, `both` | Enable one or both API formats. |
+| `API_FORMAT` | `openai` | `openai`, `ollama`, `both` | Enable LLM API formats. VLM images expose OpenAI-compatible image chat. |
 
 Set variables with `docker run -e NAME=value`.
 
@@ -204,7 +199,25 @@ sudo docker run --rm -d \
   -p 8001:8001 \
   -v /dev:/dev \
   -e API_FORMAT=both \
-  ghcr.io/hanzo-huang/rkllm-docker/qwen2.5-1.5b-instruct:w4a16-rk3576
+  ghcr.io/hanzo-huang/rkllm-docker/llm/qwen2.5-1.5b-instruct:rk3576-w4a16
+```
+
+### VLM Image Request
+
+VLM requests use the standard OpenAI image content format. The server accepts
+one image per request as an HTTPS URL or base64 data URL:
+
+```bash
+curl http://localhost:8001/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen3.5-2b:rk3576-w4a16-g128",
+    "messages": [{"role": "user", "content": [
+      {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}},
+      {"type": "text", "text": "Describe this image."}
+    ]}],
+    "max_tokens": 128
+  }'
 ```
 
 ### Ollama-Compatible Example
@@ -213,7 +226,7 @@ sudo docker run --rm -d \
 curl http://localhost:8001/api/chat \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "rkllm-model",
+    "model": "qwen2.5-1.5b-instruct:rk3576-w4a16",
     "messages": [
       {"role": "user", "content": "Hello from RKLLM."}
     ],
@@ -267,10 +280,10 @@ The machine-readable results are in [`benchmarks/rk3576.csv`](benchmarks/rk3576.
 
 ```text
 .
-├── app/                      Single FastAPI server script
+├── app/                      Separate LLM and VLM FastAPI servers
 ├── benchmarks/               Measured speed and memory data
 ├── docker/                   Runtime Dockerfile, model Dockerfile, entrypoint
-├── models/<model>/<platform>/<quantization>.env
+├── models/<llm-or-vlm>/<model>/<platform>/<quantization>.env
 │                             Model download definitions
 ├── runtime/                  ARM64 RKLLM/RKNN libraries and Python wheel
 ├── scripts/                  Platform detection and frequency tuning
@@ -308,7 +321,7 @@ Changes under `app/`, `docker/`, `runtime/`, `scripts/`, or `requirements.txt` r
 
 ### Add a Model Image
 
-1. Create `models/<model-id>/<platform>/<quantization>.env`.
+1. Create `models/<llm-or-vlm>/<model-id>/<platform>/<quantization>.env`.
 2. Add the direct model URL, file name, and optional checksum. The platform is
    derived from its directory.
 3. Commit the definition and run **Actions → Build model images → Run workflow**.

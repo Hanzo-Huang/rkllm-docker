@@ -1,8 +1,9 @@
-# Web 框架与异步支持
+# webui
 fastapi>=0.100.0
 uvicorn>=0.22.0
 pydantic>=2.0.0
 
-# 基础库
+# dependencies
 requests
+Pillow>=10.0.0
 typing-extensions

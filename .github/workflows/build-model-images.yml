@@ -8,27 +8,32 @@ on:
         required: true
         default: all
         type: choice
-        options:
-          - all
-          - model
-          - configuration
+        options: [all, model, configuration]
+      model_kind:
+        description: Model family (required for model or configuration scope)
+        required: false
+        default: llm
+        type: choice
+        options: [llm, vlm]
       model_id:
         description: Model directory name (required for model or configuration scope)
         required: false
         type: string
       platform:
-        description: Platform directory name (required for configuration scope)
+        description: Platform directory name, or all platforms (configuration scope)
         required: false
         type: choice
-        options:
-          - rk3576
-          - rk3588
+        options: [all, rk3576, rk3588]
       quantization:
         description: Quantization env name without .env (required for configuration scope)
         required: false
         type: string
       model_url:
-        description: Optional download URL override for configuration scope
+        description: Optional LLM artifact URL override for configuration scope
+        required: false
+        type: string
+      vision_model_url:
+        description: Optional VLM vision artifact URL override for configuration scope
         required: false
         type: string
       base_tag:
@@ -63,72 +68,58 @@ jobs:
         shell: bash
         env:
           BUILD_SCOPE: ${{ inputs.scope }}
+          INPUT_MODEL_KIND: ${{ inputs.model_kind }}
           INPUT_MODEL_ID: ${{ inputs.model_id }}
           INPUT_PLATFORM: ${{ inputs.platform }}
           INPUT_QUANTIZATION: ${{ inputs.quantization }}
           INPUT_MODEL_URL: ${{ inputs.model_url }}
-          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+          INPUT_VISION_MODEL_URL: ${{ inputs.vision_model_url }}
         run: |
           set -euo pipefail
 
           if [[ "$BUILD_SCOPE" == "model" || "$BUILD_SCOPE" == "configuration" ]]; then
+            [[ "$INPUT_MODEL_KIND" =~ ^(llm|vlm)$ ]]
             [[ "$INPUT_MODEL_ID" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
-            test -d "models/$INPUT_MODEL_ID"
+            test -d "models/$INPUT_MODEL_KIND/$INPUT_MODEL_ID"
           fi
-
           if [[ "$BUILD_SCOPE" == "configuration" ]]; then
-            [[ "$INPUT_PLATFORM" =~ ^rk(3576|3588)$ ]]
+            [[ "$INPUT_PLATFORM" =~ ^(all|rk(3576|3588))$ ]]
             [[ "$INPUT_QUANTIZATION" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
-            test -f "models/$INPUT_MODEL_ID/$INPUT_PLATFORM/$INPUT_QUANTIZATION.env"
+            if [[ "$INPUT_PLATFORM" != "all" ]]; then
+              test -f "models/$INPUT_MODEL_KIND/$INPUT_MODEL_ID/$INPUT_PLATFORM/$INPUT_QUANTIZATION.env"
+            fi
           elif [[ "$BUILD_SCOPE" != "all" && "$BUILD_SCOPE" != "model" ]]; then
             echo "Unsupported build scope: $BUILD_SCOPE" >&2
             exit 1
           fi
-
-          if [[ "$BUILD_SCOPE" != "configuration" && ( -n "$INPUT_MODEL_URL" || -n "$INPUT_IMAGE_TAG" ) ]]; then
-            echo "model_url and image_tag overrides require configuration scope." >&2
+          if [[ "$BUILD_SCOPE" != "configuration" && ( -n "$INPUT_MODEL_URL" || -n "$INPUT_VISION_MODEL_URL" ) ]]; then
+            echo "URL overrides require configuration scope." >&2
             exit 1
           fi
 
           entries='[]'
           while IFS= read -r definition; do
             relative="${definition#models/}"
-            model_id="${relative%%/*}"
+            model_kind="${relative%%/*}"
             remainder="${relative#*/}"
+            model_id="${remainder%%/*}"
+            remainder="${remainder#*/}"
             platform="${remainder%%/*}"
             quantization="${remainder##*/}"
             quantization="${quantization%.env}"
-
-            if [[ "$BUILD_SCOPE" == "model" && "$model_id" != "$INPUT_MODEL_ID" ]]; then
-              continue
-            fi
-            if [[ "$BUILD_SCOPE" == "configuration" && ( "$model_id" != "$INPUT_MODEL_ID" || "$platform" != "$INPUT_PLATFORM" || "$quantization" != "$INPUT_QUANTIZATION" ) ]]; then
-              continue
-            fi
-
-            entries="$(
-              jq -c \
-                --arg model_id "$model_id" \
-                --arg platform "$platform" \
-                --arg quantization "$quantization" \
-                '. + [{model_id: $model_id, platform: $platform, quantization: $quantization}]' \
-                <<< "$entries"
-            )"
-          done < <(find models -mindepth 3 -maxdepth 3 -type f -name '*.env' -print | sort)
+            if [[ "$BUILD_SCOPE" == "model" && ( "$model_kind" != "$INPUT_MODEL_KIND" || "$model_id" != "$INPUT_MODEL_ID" ) ]]; then continue; fi
+            if [[ "$BUILD_SCOPE" == "configuration" && ( "$model_kind" != "$INPUT_MODEL_KIND" || "$model_id" != "$INPUT_MODEL_ID" || ( "$INPUT_PLATFORM" != "all" && "$platform" != "$INPUT_PLATFORM" ) || "$quantization" != "$INPUT_QUANTIZATION" ) ]]; then continue; fi
+            entries="$(jq -c --arg model_kind "$model_kind" --arg model_id "$model_id" --arg platform "$platform" --arg quantization "$quantization" '. + [{model_kind: $model_kind, model_id: $model_id, platform: $platform, quantization: $quantization}]' <<< "$entries")"
+          done < <(find models -mindepth 4 -maxdepth 4 -type f -name '*.env' -print | sort)
 
           count="$(jq 'length' <<< "$entries")"
-          if [[ "$count" -eq 0 ]]; then
-            echo "No model configurations found for the requested scope." >&2
-            exit 1
-          fi
-
-          echo "Discovered $count model configurations:"
-          jq -r '.[] | "- \(.model_id):\(.quantization)-\(.platform)"' <<< "$entries"
+          [[ "$count" -gt 0 ]] || { echo "No model configurations found." >&2; exit 1; }
+          jq -r '.[] | "- \(.model_kind)/\(.model_id):\(.platform)-\(.quantization)"' <<< "$entries"
           echo "matrix=$(jq -c '{include: .}' <<< "$entries")" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
 
   build:
-    name: ${{ matrix.model_id }}:${{ matrix.quantization }}-${{ matrix.platform }}
+    name: ${{ matrix.model_kind }}/${{ matrix.model_id }}:${{ matrix.platform }}-${{ matrix.quantization }}
     needs: discover
     runs-on: ubuntu-24.04
     strategy:
@@ -142,66 +133,63 @@ jobs:
         id: model
         shell: bash
         env:
+          INPUT_MODEL_KIND: ${{ matrix.model_kind }}
           INPUT_MODEL_ID: ${{ matrix.model_id }}
           INPUT_PLATFORM: ${{ matrix.platform }}
           INPUT_QUANTIZATION: ${{ matrix.quantization }}
           INPUT_MODEL_URL: ${{ inputs.model_url }}
+          INPUT_VISION_MODEL_URL: ${{ inputs.vision_model_url }}
           INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
-          [[ "$INPUT_MODEL_ID" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
-          [[ "$INPUT_PLATFORM" =~ ^rk(3576|3588)$ ]]
-          [[ "$INPUT_QUANTIZATION" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
-          definition="models/$INPUT_MODEL_ID/$INPUT_PLATFORM/$INPUT_QUANTIZATION.env"
+          definition="models/$INPUT_MODEL_KIND/$INPUT_MODEL_ID/$INPUT_PLATFORM/$INPUT_QUANTIZATION.env"
           test -f "$definition"
-          set -a
-          source "$definition"
-          set +a
+          set -a; source "$definition"; set +a
+          MODEL_KIND="${MODEL_KIND:-$INPUT_MODEL_KIND}"
+          [[ "$MODEL_KIND" == "$INPUT_MODEL_KIND" ]]
           MODEL_URL="${INPUT_MODEL_URL:-${MODEL_URL:-}}"
-          test -n "$MODEL_URL"
+          VISION_MODEL_URL="${INPUT_VISION_MODEL_URL:-${VISION_MODEL_URL:-}}"
+          test -n "$MODEL_URL"; test -n "${MODEL_FILE:-}"; test -n "${RKLLM_TOOLKIT_VERSION:-}"
           [[ "$MODEL_FILE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.rkllm$ ]]
-          [[ "${RKLLM_TOOLKIT_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ "$MODEL_KIND" == "vlm" ]]; then
+            test -n "$VISION_MODEL_URL"; test -n "${VISION_MODEL_FILE:-}"
+            [[ "$VISION_MODEL_FILE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.rknn$ ]]
+          fi
           base_image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          image="$base_image/$INPUT_MODEL_ID"
-          default_tag="$INPUT_QUANTIZATION-$INPUT_PLATFORM"
+          image="$base_image/$INPUT_MODEL_KIND/$INPUT_MODEL_ID"
+          default_tag="$INPUT_PLATFORM-$INPUT_QUANTIZATION"
           tag="${INPUT_IMAGE_TAG:-$default_tag}"
           [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
           {
-            echo "url=$MODEL_URL"
-            echo "file=$MODEL_FILE"
-            echo "platform=$INPUT_PLATFORM"
-            echo "toolkit_version=$RKLLM_TOOLKIT_VERSION"
-            echo "sha256=${MODEL_SHA256:-}"
-            echo "base_image=$base_image"
-            echo "image=$image"
-            echo "tag=$tag"
+            echo "model_kind=$MODEL_KIND"; echo "url=$MODEL_URL"; echo "file=$MODEL_FILE"; echo "platform=$INPUT_PLATFORM"; echo "toolkit_version=$RKLLM_TOOLKIT_VERSION"; echo "sha256=${MODEL_SHA256:-}"; echo "vision_url=$VISION_MODEL_URL"; echo "vision_file=${VISION_MODEL_FILE:-}"; echo "vision_sha256=${VISION_MODEL_SHA256:-}"; echo "image_size=${VLM_IMAGE_SIZE:-392}"; echo "base_image=$base_image"; echo "image=$image"; echo "tag=$tag"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Download model
+      - name: Download model artifacts
         shell: bash
         env:
           MODEL_URL: ${{ steps.model.outputs.url }}
           MODEL_FILE: ${{ steps.model.outputs.file }}
           MODEL_SHA256: ${{ steps.model.outputs.sha256 }}
+          VISION_MODEL_URL: ${{ steps.model.outputs.vision_url }}
+          VISION_MODEL_FILE: ${{ steps.model.outputs.vision_file }}
+          VISION_MODEL_SHA256: ${{ steps.model.outputs.vision_sha256 }}
           MODEL_DOWNLOAD_TOKEN: ${{ secrets.MODEL_DOWNLOAD_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p models/.build
-          args=(--fail --location --retry 3 --output "models/.build/$MODEL_FILE")
-          if [[ -n "$MODEL_DOWNLOAD_TOKEN" ]]; then
-            args+=(--header "Authorization: Bearer $MODEL_DOWNLOAD_TOKEN")
-          fi
-          curl "${args[@]}" "$MODEL_URL"
-          if [[ -n "$MODEL_SHA256" ]]; then
-            echo "$MODEL_SHA256  models/.build/$MODEL_FILE" | sha256sum --check --strict
-          fi
+          download() {
+            local url="$1" file="$2" sha="$3"
+            local args=(--fail --location --retry 3 --output "models/.build/$file")
+            [[ -n "$MODEL_DOWNLOAD_TOKEN" ]] && args+=(--header "Authorization: Bearer $MODEL_DOWNLOAD_TOKEN")
+            curl "${args[@]}" "$url"
+            [[ -z "$sha" ]] || echo "$sha  models/.build/$file" | sha256sum --check --strict
+          }
+          download "$MODEL_URL" "$MODEL_FILE" "$MODEL_SHA256"
+          if [[ -n "$VISION_MODEL_FILE" ]]; then download "$VISION_MODEL_URL" "$VISION_MODEL_FILE" "$VISION_MODEL_SHA256"; fi
 
       - uses: docker/setup-qemu-action@v3
-
       - uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -216,12 +204,15 @@ jobs:
           push: true
           build-args: |
             BASE_IMAGE=${{ steps.model.outputs.base_image }}:${{ inputs.base_tag }}
-            MODEL_ID=${{ matrix.model_id }}:${{ matrix.quantization }}-${{ matrix.platform }}
+            MODEL_KIND=${{ steps.model.outputs.model_kind }}
+            MODEL_ID=${{ matrix.model_id }}:${{ matrix.platform }}-${{ matrix.quantization }}
             MODEL_FILE=${{ steps.model.outputs.file }}
+            VISION_MODEL_FILE=${{ steps.model.outputs.vision_file }}
             TARGET_PLATFORM=${{ matrix.platform }}
             RKLLM_TOOLKIT_VERSION=${{ steps.model.outputs.toolkit_version }}
+            VLM_IMAGE_SIZE=${{ steps.model.outputs.image_size }}
           tags: |
             ${{ steps.model.outputs.image }}:${{ steps.model.outputs.tag }}
             ${{ steps.model.outputs.image }}:${{ steps.model.outputs.tag }}-${{ github.sha }}
-          cache-from: type=gha,scope=rkllm-${{ matrix.model_id }}-${{ matrix.quantization }}-${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=rkllm-${{ matrix.model_id }}-${{ matrix.quantization }}-${{ matrix.platform }}
+          cache-from: type=gha,scope=rkllm-${{ matrix.model_kind }}-${{ matrix.model_id }}-${{ matrix.platform }}-${{ matrix.quantization }}
+          cache-to: type=gha,mode=max,scope=rkllm-${{ matrix.model_kind }}-${{ matrix.model_id }}-${{ matrix.platform }}-${{ matrix.quantization }}

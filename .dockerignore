@@ -6,4 +6,6 @@
 **/*.pyc
 models/**/*.rkllm
 !models/.build/**/*.rkllm
-
+!models/.build/**/*.rknn
+!models/.build/
+!models/.build/**

@@ -3,7 +3,7 @@ FROM python:3.11-slim-bookworm
 
 ARG TARGETARCH
 ARG VERSION=dev
-ARG RKLLM_RUNTIME_VERSION=1.2.3
+ARG RKLLM_RUNTIME_VERSION=1.3.0
 
 LABEL org.opencontainers.image.title="RKLLM runtime" \
       org.opencontainers.image.description="ARM64 RKLLM OpenAI-compatible API runtime" \
@@ -14,6 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/usr/lib \
     MODEL_PATH=/app/models/model.rkllm \
+    MODEL_KIND=llm \
+    VISION_MODEL_PATH= \
     RKLLM_RUNTIME_VERSION=${RKLLM_RUNTIME_VERSION} \
     TARGET_PLATFORM=auto \
     RUN_FREQ_FIX=true \
@@ -35,6 +37,7 @@ RUN ldconfig \
 
 WORKDIR /app
 COPY app/fastapi_server_llm.py /app/fastapi_server_llm.py
+COPY app/fastapi_server_vlm.py /app/fastapi_server_vlm.py
 COPY scripts/fix_freq*.sh /app/
 COPY docker/entrypoint.sh /app/docker-entrypoint.sh
 
