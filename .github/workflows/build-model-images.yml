@@ -4,28 +4,28 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Model configurations to build
+        description: "Build target: all models, one model with all variants, or one exact variant"
         required: true
         default: all
         type: choice
         options: [all, model, configuration]
       model_kind:
-        description: Model family (required for model or configuration scope)
+        description: Model family filter; used only for model or configuration scope
         required: false
         default: llm
         type: choice
         options: [llm, vlm]
       model_id:
-        description: Model directory name (required for model or configuration scope)
+        description: Model directory name; used only for model or configuration scope
         required: false
         type: string
       platform:
-        description: Platform directory name, or all platforms (configuration scope)
+        description: Target platform for configuration scope, or all supported platforms
         required: false
         type: choice
         options: [all, rk3576, rk3588]
       quantization:
-        description: Quantization env name without .env (required for configuration scope)
+        description: Quantization variant without .env; used for configuration scope
         required: false
         type: string
       model_url:

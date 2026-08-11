@@ -384,6 +384,17 @@ Changes under `app/`, `docker/`, `runtime/`, `scripts/`, or `requirements.txt` r
    derived from its directory.
 3. Commit the definition and run **Actions → Build model images → Run workflow**.
 
+The workflow's `scope` selects how many definitions to build:
+
+| Scope | Required filters | Builds |
+| --- | --- | --- |
+| `all` | None | Every LLM and VLM definition under `models/`. |
+| `model` | `model_kind`, `model_id` | Every platform and quantization variant of one model. |
+| `configuration` | `model_kind`, `model_id`, `quantization`, `platform` | One exact variant; use `platform=all` for that quantization on every platform. |
+
+For `scope=all`, leave `model_id`, `platform`, and `quantization` empty. The
+`model_kind` value is ignored in this scope.
+
 ```dotenv
 MODEL_URL=https://huggingface.co/<account>/<repo>/resolve/main/path/model.rkllm
 MODEL_FILE=model.rkllm
