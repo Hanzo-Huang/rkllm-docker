@@ -37,8 +37,27 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 
+LOG_LEVELS = ("critical", "error", "warning", "info", "debug")
+
+
+def normalize_log_level(value: str) -> str:
+    """Return a logging level accepted by both Python logging and Uvicorn."""
+    level = str(value).strip().lower()
+    if level == "warn":
+        level = "warning"
+    if level not in LOG_LEVELS:
+        valid_levels = ", ".join(LOG_LEVELS)
+        raise ValueError(f"invalid log level {value!r}; use one of: {valid_levels}")
+    return level
+
+
+try:
+    initial_log_level = normalize_log_level(os.environ.get("LOG_LEVEL", "info"))
+except ValueError:
+    initial_log_level = "info"
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, initial_log_level.upper()),
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("rkllm")
@@ -724,7 +743,7 @@ class ServerConfig:
         self.max_concurrent_requests = 1
         self.timeout_seconds = 300
         self.host = "0.0.0.0"
-        self.port = 8002
+        self.port = 8001
         self.rknn_core_num = 3
         self.img_start = "<|vision_start|>"
         self.img_end = "<|vision_end|>"
@@ -1132,7 +1151,7 @@ if __name__ == "__main__":
     parser.add_argument("--llm_model", required=True, help="Multimodal language model .rkllm path")
     parser.add_argument("--model_name", default=os.environ.get("API_MODEL_NAME") or "rkllm-vision")
     parser.add_argument("--target_platform", choices=["rk3576", "rk3588", "rk3588s", "rk3562", "rv1126b"], default="rk3588")
-    parser.add_argument("--port", type=int, default=8002)
+    parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--max_context_len", type=int, default=2048)
     parser.add_argument("--default_temperature", type=float, default=0.7)
@@ -1146,7 +1165,18 @@ if __name__ == "__main__":
     parser.add_argument("--img_end", default="<|vision_end|>")
     parser.add_argument("--img_content", default="<|image_pad|>")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--log_level",
+        default=initial_log_level,
+        choices=LOG_LEVELS,
+        help="Log level (default: LOG_LEVEL or info)",
+    )
     args = parser.parse_args()
+
+    effective_log_level = "debug" if args.debug else normalize_log_level(args.log_level)
+    numeric_log_level = getattr(logging, effective_log_level.upper())
+    logging.getLogger().setLevel(numeric_log_level)
+    logger.setLevel(numeric_log_level)
 
     for path, label in ((args.encoder_model, "encoder model"), (args.llm_model, "LLM model")):
         if not os.path.exists(path):
@@ -1173,13 +1203,10 @@ if __name__ == "__main__":
     config.img_start = args.img_start
     config.img_end = args.img_end
     config.img_content = args.img_content
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
-
     logger.info(
         "Configuration: vision_model=%s llm_model=%s platform=%s host=%s "
         "port=%s api_model=%s vision_cores=%s context=%s temperature=%s "
-        "top_p=%s top_k=%s max_tokens=%s timeout=%ss",
+        "top_p=%s top_k=%s max_tokens=%s timeout=%ss log_level=%s",
         config.encoder_model_path,
         config.llm_model_path,
         config.platform,
@@ -1193,6 +1220,7 @@ if __name__ == "__main__":
         config.default_top_k,
         config.default_max_tokens,
         config.timeout_seconds,
+        effective_log_level,
     )
 
     try:
@@ -1200,7 +1228,7 @@ if __name__ == "__main__":
             app,
             host=args.host,
             port=args.port,
-            log_level="debug" if args.debug else "info",
+            log_level=effective_log_level,
             access_log=True,
             timeout_keep_alive=config.timeout_seconds,
         )

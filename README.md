@@ -52,6 +52,8 @@ allows models produced by different toolkit versions to coexist.
 
 ### 1. Start a model
 
+#### LLM
+
 The following image runs Qwen2.5 1.5B Instruct W4A16 on RK3576:
 
 ```bash
@@ -66,9 +68,20 @@ sudo docker run --rm -d \
 > [!NOTE]
 > On RK3588, use an image tagged `rk3588-w8a8`. A model compiled for one target platform must not be used on a different target.
 
-All images listen on port `8001` inside the container. Use a different host
-port if running an LLM and VLM container at the same time, for example
-`-p 8002:8001`.
+#### VLM
+
+The following image runs Qwen3.5 2B W4A16-g128 on RK3576:
+
+```bash
+sudo docker run --rm -d \
+  --name rkllm-vlm \
+  --privileged \
+  -p 8001:8001 \
+  -v /dev:/dev \
+  ghcr.io/hanzo-huang/rkllm-docker/vlm/qwen3.5-2b:rk3576-w4a16-g128
+```
+
+Both LLM and VLM images use port `8001`.
 
 ### 2. Check the server
 
@@ -99,6 +112,7 @@ curl http://localhost:8001/v1/chat/completions \
 
 ```bash
 sudo docker stop rkllm
+sudo docker stop rkllm-vlm
 ```
 
 ## Configured Model Images
@@ -182,7 +196,7 @@ the VLM backend explicitly:
 sudo docker run --rm -d \
   --name rkllm-vlm \
   --privileged \
-  -p 8002:8001 \
+  -p 8001:8001 \
   -v /dev:/dev \
   -v /absolute/path/to/models:/app/models:ro \
   -e MODEL_KIND=vlm \
@@ -194,8 +208,7 @@ sudo docker run --rm -d \
 ```
 
 The `.rkllm` and `.rknn` files must be a matching conversion for the same
-platform. The VLM API is available at `http://localhost:8002/v1` because the
-host port is mapped from `8002` to the container's port `8001`.
+platform. The VLM API is available at `http://localhost:8001/v1`.
 
 For interactive text chat with a custom LLM, use `-it`, set
 `INTERACTIVE_CHAT=true`, and set `LOG_LEVEL=warning`. Interactive chat is not
@@ -214,7 +227,6 @@ available for the VLM server; use its HTTP API for image requests.
 | `TARGET_PLATFORM` | `auto` | `auto`, `rk3576`, `rk3588`, `rk3588s` | Select or detect the target SoC. |
 | `RUN_FREQ_FIX` | `true` | `true`, `false` | Apply platform-specific frequency settings at startup. |
 | `PORT` | `8001` | TCP port | Set the HTTP server port inside the container. |
-| `API_FORMAT` | `openai` | `openai`, `ollama`, `both` | Enable LLM API formats. VLM images expose OpenAI-compatible image chat. |
 | `LOG_LEVEL` | `info` | `critical`, `error`, `warning`, `info`, `debug` | Set Python and Uvicorn logging verbosity. |
 | `INTERACTIVE_CHAT` | `false` | `true`, `false` | Open the LLM terminal chat on the container's stdin/stdout. |
 
@@ -242,21 +254,12 @@ needed; those messages may appear alongside the conversation.
 
 | Format | Endpoints | Streaming format |
 | --- | --- | --- |
-| OpenAI | `GET /v1/models`, `GET /models`, `POST /v1/chat/completions` | Server-sent events |
-| Ollama | `GET /api/version`, `GET /api/tags`, `POST /api/show`, `POST /api/generate`, `POST /api/chat` | Newline-delimited JSON |
+| OpenAI | `GET /v1/models`, `POST /v1/chat/completions` | Server-sent events |
+| Ollama | `GET /api/tags`, `POST /api/generate`, `POST /api/chat` | Newline-delimited JSON |
 | Shared | `GET /`, `GET /health`, `GET /docs` | — |
 
-To enable both API styles:
-
-```bash
-sudo docker run --rm -d \
-  --name rkllm \
-  --privileged \
-  -p 8001:8001 \
-  -v /dev:/dev \
-  -e API_FORMAT=both \
-  ghcr.io/hanzo-huang/rkllm-docker/llm/qwen2.5-1.5b-instruct:rk3576-w4a16
-```
+LLM images expose both API styles by default. VLM images expose the
+OpenAI-compatible endpoints.
 
 ### VLM Image Request
 
@@ -394,6 +397,10 @@ The workflow's `scope` selects how many definitions to build:
 
 For `scope=all`, leave `model_id`, `platform`, and `quantization` empty. The
 `model_kind` value is ignored in this scope.
+
+Use `image_tag` only when building one exact configuration. Leave it empty for
+`platform=all`; the workflow then creates unique `<platform>-<quantization>`
+tags and prevents platform images from overwriting each other.
 
 ```dotenv
 MODEL_URL=https://huggingface.co/<account>/<repo>/resolve/main/path/model.rkllm

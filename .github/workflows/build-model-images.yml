@@ -42,7 +42,7 @@ on:
         default: env-latest
         type: string
       image_tag:
-        description: Optional published image tag override for configuration scope
+        description: Optional tag override for one exact configuration; unavailable with platform=all
         required: false
         type: string
 
@@ -74,6 +74,7 @@ jobs:
           INPUT_QUANTIZATION: ${{ inputs.quantization }}
           INPUT_MODEL_URL: ${{ inputs.model_url }}
           INPUT_VISION_MODEL_URL: ${{ inputs.vision_model_url }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
 
@@ -94,6 +95,15 @@ jobs:
           fi
           if [[ "$BUILD_SCOPE" != "configuration" && ( -n "$INPUT_MODEL_URL" || -n "$INPUT_VISION_MODEL_URL" ) ]]; then
             echo "URL overrides require configuration scope." >&2
+            exit 1
+          fi
+          if [[ "$BUILD_SCOPE" != "configuration" && -n "$INPUT_IMAGE_TAG" ]]; then
+            echo "image_tag requires configuration scope." >&2
+            exit 1
+          fi
+          if [[ "$BUILD_SCOPE" == "configuration" && "$INPUT_PLATFORM" == "all" && -n "$INPUT_IMAGE_TAG" ]]; then
+            echo "image_tag cannot be used with platform=all because platform builds would overwrite the same tag." >&2
+            echo "Leave image_tag empty to use unique <platform>-<quantization> tags." >&2
             exit 1
           fi
 

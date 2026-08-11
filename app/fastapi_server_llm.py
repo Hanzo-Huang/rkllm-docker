@@ -1379,9 +1379,6 @@ Examples:
                        help='Server host (default: 0.0.0.0)')
     parser.add_argument('--model_name', type=str, default='rkllm-model',
                        help='Model name returned by the OpenAI/Ollama APIs (default: rkllm-model)')
-    parser.add_argument('--api_format', type=str, default=os.environ.get('API_FORMAT', 'both').lower(),
-                       choices=['openai', 'ollama', 'both'],
-                       help='Compatibility option retained for the container interface')
     parser.add_argument('--no_chat', action='store_true',
                        help='Start the API server without opening the terminal chat')
 
