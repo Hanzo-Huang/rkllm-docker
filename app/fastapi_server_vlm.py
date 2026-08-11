@@ -37,8 +37,11 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("rkllm")
 
 
 def preload_libraries() -> None:
@@ -709,7 +712,7 @@ class RKLLMRuntime:
 
 class ServerConfig:
     def __init__(self):
-        self.model_name = os.environ.get("MODEL_ID", "rkllm-vision")
+        self.model_name = os.environ.get("API_MODEL_NAME") or "rkllm-vision"
         self.encoder_model_path = ""
         self.llm_model_path = ""
         self.platform = "rk3588"
@@ -720,6 +723,7 @@ class ServerConfig:
         self.default_max_tokens = 512
         self.max_concurrent_requests = 1
         self.timeout_seconds = 300
+        self.host = "0.0.0.0"
         self.port = 8002
         self.rknn_core_num = 3
         self.img_start = "<|vision_start|>"
@@ -831,15 +835,25 @@ def execute_inference(
     enable_thinking: bool = False,
 ) -> InferenceState:
     state = request_states[request_id]
+    started = time.time()
     try:
         image_embeddings = None
         image_width = image_height = 0
         if image_url:
+            logger.info("[%s] loading image", request_id)
             image_bytes = load_image(image_url)
             image_embeddings = runtime.encoder.encode(image_bytes)
             image_width = runtime.encoder.width
             image_height = runtime.encoder.height
-        return runtime.llm.run(
+            logger.info(
+                "[%s] image encoded: bytes=%s size=%sx%s tokens=%s",
+                request_id,
+                len(image_bytes),
+                image_width,
+                image_height,
+                runtime.encoder.image_tokens,
+            )
+        result = runtime.llm.run(
             request_id,
             prompt,
             image_embeddings,
@@ -847,9 +861,15 @@ def execute_inference(
             image_height,
             enable_thinking=enable_thinking,
         )
+        if result.error:
+            logger.error("[%s] request failed: %s", request_id, result.error)
+        else:
+            logger.info("[%s] request completed in %.2fs", request_id, time.time() - started)
+        return result
     except Exception as error:
         state.error = str(error)
         state.completed.set()
+        logger.exception("[%s] request failed", request_id)
         return state
 
 
@@ -873,6 +893,14 @@ def openai_chunk(request_id: str, created: int, model: str, content: Optional[st
 async def stream_completion(request: ChatCompletionRequest, request_id: str, created: int,
                            prompt: str, image_url: Optional[str]):
     try:
+        logger.info(
+            "[%s] request started: stream=true messages=%s image=%s prompt_chars=%s max_tokens=%s",
+            request_id,
+            len(request.messages),
+            bool(image_url),
+            len(prompt),
+            request.max_tokens,
+        )
         executor.submit(
             execute_inference,
             request_id,
@@ -903,9 +931,16 @@ async def stream_completion(request: ChatCompletionRequest, request_id: str, cre
                     yield "data: [DONE]\n\n"
                     break
             if time.time() - last_activity > config.timeout_seconds:
-                yield f"data: {json.dumps({'error': {'message': 'Inference timeout'}})}\n\n"
+                timeout_error = f"Inference timeout ({config.timeout_seconds}s)"
+                logger.error("[%s] streaming response timeout", request_id)
+                yield f"data: {json.dumps({'error': {'message': timeout_error}})}\n\n"
+                yield "data: [DONE]\n\n"
                 break
             await asyncio.sleep(0.05)
+    except Exception as error:
+        logger.exception("[%s] stream generation failed", request_id)
+        yield f"data: {json.dumps({'error': {'message': str(error)}})}\n\n"
+        yield "data: [DONE]\n\n"
     finally:
         request_states.pop(request_id, None)
         release_request_slot()
@@ -933,10 +968,20 @@ async def lifespan(app: FastAPI):
             encoder_core_num = core_limit
         runtime.encoder = RKNNImageEncoder(config.encoder_model_path, encoder_core_num)
         runtime.llm = RKLLMRuntime(config.llm_model_path, config.platform, config)
-        logger.info("VLM initialized using official librknnrt.so + librkllmrt.so")
-        logger.info("OpenAI API: http://127.0.0.1:%s/v1", config.port)
+        logger.info(
+            "API ready: model=%s platform=%s vision_cores=%s",
+            config.model_name,
+            config.platform,
+            encoder_core_num,
+        )
+        # Show the bind address in startup logs.  For Docker this is normally
+        # 0.0.0.0, which makes it clear the service listens on all interfaces.
+        display_host = config.host
+        logger.info("OpenAI API: http://%s:%s/v1", display_host, config.port)
+        logger.info("API docs: http://%s:%s/docs", display_host, config.port)
         yield
     finally:
+        logger.info("Shutting down VLM server")
         request_states.clear()
         if executor:
             executor.shutdown(wait=False)
@@ -1025,6 +1070,14 @@ async def create_chat_completion(request: ChatCompletionRequest):
     request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(time.time())
     request_states[request_id] = InferenceState()
+    logger.info(
+        "[%s] request accepted: stream=%s messages=%s image=%s model=%s",
+        request_id,
+        request.stream,
+        len(request.messages),
+        bool(image_url),
+        request.model,
+    )
 
     if request.stream:
         return StreamingResponse(
@@ -1066,6 +1119,7 @@ async def create_chat_completion(request: ChatCompletionRequest):
     except HTTPException:
         raise
     except Exception as error:
+        logger.exception("[%s] non-stream request failed", request_id)
         raise HTTPException(status_code=500, detail=str(error)) from error
     finally:
         request_states.pop(request_id, None)
@@ -1076,7 +1130,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Official-runtime RKLLM Vision OpenAI API server")
     parser.add_argument("--encoder_model", required=True, help="Vision encoder .rknn path")
     parser.add_argument("--llm_model", required=True, help="Multimodal language model .rkllm path")
-    parser.add_argument("--model_name", default=os.environ.get("MODEL_ID", "rkllm-vision"))
+    parser.add_argument("--model_name", default=os.environ.get("API_MODEL_NAME") or "rkllm-vision")
     parser.add_argument("--target_platform", choices=["rk3576", "rk3588", "rk3588s", "rk3562", "rv1126b"], default="rk3588")
     parser.add_argument("--port", type=int, default=8002)
     parser.add_argument("--host", default="0.0.0.0")
@@ -1096,7 +1150,7 @@ if __name__ == "__main__":
 
     for path, label in ((args.encoder_model, "encoder model"), (args.llm_model, "LLM model")):
         if not os.path.exists(path):
-            print(f"Error: {label} not found: {path}")
+            logger.error("%s not found: %s", label.capitalize(), path)
             sys.exit(1)
     config.encoder_model_path = os.path.abspath(args.encoder_model)
     config.llm_model_path = os.path.abspath(args.llm_model)
@@ -1109,6 +1163,7 @@ if __name__ == "__main__":
     config.default_max_tokens = args.default_max_tokens
     config.max_concurrent_requests = args.max_concurrent
     config.timeout_seconds = args.timeout
+    config.host = args.host
     config.port = args.port
     config.rknn_core_num = (
         args.rknn_core_num
@@ -1121,14 +1176,24 @@ if __name__ == "__main__":
     if args.debug:
         logger.setLevel(logging.DEBUG)
 
-    print("=" * 60)
-    print("Official RKLLM VLM OpenAI API")
-    print(f"  Vision model: {config.encoder_model_path}")
-    print(f"  LLM model: {config.llm_model_path}")
-    print(f"  API: http://127.0.0.1:{args.port}/v1")
-    print("  Runtime: librknnrt.so + librkllmrt.so")
-    print("  Custom service wrapper: removed")
-    print("=" * 60)
+    logger.info(
+        "Configuration: vision_model=%s llm_model=%s platform=%s host=%s "
+        "port=%s api_model=%s vision_cores=%s context=%s temperature=%s "
+        "top_p=%s top_k=%s max_tokens=%s timeout=%ss",
+        config.encoder_model_path,
+        config.llm_model_path,
+        config.platform,
+        args.host,
+        args.port,
+        config.model_name,
+        config.rknn_core_num,
+        config.max_context_len,
+        config.default_temperature,
+        config.default_top_p,
+        config.default_top_k,
+        config.default_max_tokens,
+        config.timeout_seconds,
+    )
 
     try:
         uvicorn.run(
@@ -1140,4 +1205,4 @@ if __name__ == "__main__":
             timeout_keep_alive=config.timeout_seconds,
         )
     except KeyboardInterrupt:
-        print("\nServer interrupted by user")
+        logger.info("Server interrupted by user")

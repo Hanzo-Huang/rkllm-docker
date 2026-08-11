@@ -86,7 +86,7 @@ Interactive API documentation is available at `http://localhost:8001/docs`.
 curl http://localhost:8001/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen2.5-1.5b-instruct:rk3576-w4a16",
+    "model": "rkllm-model",
     "messages": [
       {"role": "user", "content": "Explain edge AI in one sentence."}
     ],
@@ -147,40 +147,96 @@ All published images target `linux/arm64`. They are not intended to perform NPU 
 
 ## Use Your Own Model
 
-Place a platform-compatible `.rkllm` file in a host directory, then mount it into the model-free image:
+The model-free runtime supports two separate modes. Use `MODEL_KIND=llm` for a
+text-only model, or `MODEL_KIND=vlm` when you have both an RKLLM language model
+and an RKNN vision encoder.
+
+### Custom LLM
+
+Mount one platform-compatible `.rkllm` file into the model-free image:
 
 ```bash
 sudo docker run --rm -d \
-  --name rkllm \
+  --name rkllm-llm \
   --privileged \
   -p 8001:8001 \
   -v /dev:/dev \
   -v /absolute/path/to/models:/app/models:ro \
-  -e MODEL_PATH=/app/models/my-model.rkllm \
+  -e MODEL_KIND=llm \
+  -e MODEL_FILE=my-model.rkllm \
   -e TARGET_PLATFORM=rk3576 \
+  -e API_MODEL_NAME=my-llm \
   ghcr.io/hanzo-huang/rkllm-docker:env-latest
 ```
 
-Replace the host path, file name, and platform with values for your device. The container exits with a clear error if `MODEL_PATH` does not exist.
+Replace the host path, file name, and platform with values for your device.
+The container exits with a clear error if the selected model file does not
+exist.
 
-For a VLM, mount both paired artifacts and set `MODEL_KIND=vlm` and
-`VISION_MODEL_PATH` to the mounted `.rknn` file. The LLM and vision artifacts
-must target the same platform and model conversion.
+### Custom VLM
+
+Mount the paired `.rkllm` language model and `.rknn` vision encoder, and select
+the VLM backend explicitly:
+
+```bash
+sudo docker run --rm -d \
+  --name rkllm-vlm \
+  --privileged \
+  -p 8002:8001 \
+  -v /dev:/dev \
+  -v /absolute/path/to/models:/app/models:ro \
+  -e MODEL_KIND=vlm \
+  -e MODEL_FILE=my-vlm-language-model.rkllm \
+  -e VISION_MODEL_FILE=my-vlm-vision-model.rknn \
+  -e TARGET_PLATFORM=rk3576 \
+  -e API_MODEL_NAME=my-vlm \
+  ghcr.io/hanzo-huang/rkllm-docker:env-latest
+```
+
+The `.rkllm` and `.rknn` files must be a matching conversion for the same
+platform. The VLM API is available at `http://localhost:8002/v1` because the
+host port is mapped from `8002` to the container's port `8001`.
+
+For interactive text chat with a custom LLM, use `-it`, set
+`INTERACTIVE_CHAT=true`, and set `LOG_LEVEL=warning`. Interactive chat is not
+available for the VLM server; use its HTTP API for image requests.
 
 ## Configuration
 
 | Variable | Default | Allowed values | Purpose |
 | --- | --- | --- | --- |
 | `MODEL_PATH` | `/app/models/model.rkllm` | Container file path | Select the RKLLM model to load. |
+| `MODEL_FILE` | empty | Filename under `/app/models` | Select the RKLLM model by filename; overrides `MODEL_PATH` when set. |
 | `MODEL_KIND` | `llm` | `llm`, `vlm` | Select the native model backend. |
-| `MODEL_ID` | model-specific | Model name | Public model name returned by `/v1/models` and Ollama APIs. |
+| `API_MODEL_NAME` | `rkllm-model` for LLM, `rkllm-vision` for VLM | Model name | Optional stable public name returned by `/v1/models` and API responses. |
 | `VISION_MODEL_PATH` | empty | Container file path | RKNN vision encoder path for VLM images. |
+| `VISION_MODEL_FILE` | empty | Filename under `/app/models` | Select the VLM vision encoder by filename; overrides `VISION_MODEL_PATH` when set. |
 | `TARGET_PLATFORM` | `auto` | `auto`, `rk3576`, `rk3588`, `rk3588s` | Select or detect the target SoC. |
 | `RUN_FREQ_FIX` | `true` | `true`, `false` | Apply platform-specific frequency settings at startup. |
 | `PORT` | `8001` | TCP port | Set the HTTP server port inside the container. |
 | `API_FORMAT` | `openai` | `openai`, `ollama`, `both` | Enable LLM API formats. VLM images expose OpenAI-compatible image chat. |
+| `LOG_LEVEL` | `info` | `critical`, `error`, `warning`, `info`, `debug` | Set Python and Uvicorn logging verbosity. |
+| `INTERACTIVE_CHAT` | `false` | `true`, `false` | Open the LLM terminal chat on the container's stdin/stdout. |
 
 Set variables with `docker run -e NAME=value`.
+
+For a clean terminal conversation immediately after starting an LLM container,
+attach stdin/TTY, enable interactive chat, and lower routine logging:
+
+```bash
+sudo docker run --rm -it \
+  --name rkllm-chat \
+  --privileged \
+  -p 8001:8001 \
+  -v /dev:/dev \
+  -e INTERACTIVE_CHAT=true \
+  -e LOG_LEVEL=warning \
+  ghcr.io/hanzo-huang/rkllm-docker/llm/qwen2.5-1.5b-instruct:rk3576-w4a16
+```
+
+Interactive mode disables Uvicorn access logs automatically. Use
+`LOG_LEVEL=info` or `LOG_LEVEL=debug` when startup/request diagnostics are
+needed; those messages may appear alongside the conversation.
 
 ### API Endpoints
 
@@ -211,7 +267,7 @@ one image per request as an HTTPS URL or base64 data URL:
 curl http://localhost:8001/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen3.5-2b:rk3576-w4a16-g128",
+    "model": "rkllm-vision",
     "messages": [{"role": "user", "content": [
       {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}},
       {"type": "text", "text": "Describe this image."}
@@ -226,7 +282,7 @@ curl http://localhost:8001/v1/chat/completions \
 curl http://localhost:8001/api/chat \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen2.5-1.5b-instruct:rk3576-w4a16",
+    "model": "rkllm-model",
     "messages": [
       {"role": "user", "content": "Hello from RKLLM."}
     ],
@@ -314,6 +370,8 @@ sudo docker run --rm -it \
   -v /absolute/path/to/models:/app/models:ro \
   -e MODEL_PATH=/app/models/my-model.rkllm \
   -e TARGET_PLATFORM=rk3576 \
+  -e INTERACTIVE_CHAT=true \
+  -e LOG_LEVEL=warning \
   rkllm-env:dev
 ```
 
