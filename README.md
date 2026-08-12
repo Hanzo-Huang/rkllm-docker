@@ -57,6 +57,24 @@ allows models produced by different toolkit versions to coexist.
 The following image runs Qwen2.5 1.5B Instruct W4A16 on RK3576:
 
 ```bash
+sudo docker run --rm -it \
+  --name rkllm \
+  --privileged \
+  -p 8001:8001 \
+  -v /dev:/dev \
+  -e INTERACTIVE_CHAT=true \
+  -e LOG_LEVEL=warning \
+  ghcr.io/hanzo-huang/rkllm-docker/llm/qwen2.5-1.5b-instruct:rk3576-w4a16
+```
+
+With this command, wait for `Chat demo ready`, then type at the `You:` prompt.
+Use `/reset` to clear the conversation or `/exit` to stop the container. The
+HTTP API remains available at `http://localhost:8001` while the terminal chat
+is running.
+
+For a background/API-only LLM:
+
+```bash
 sudo docker run --rm -d \
   --name rkllm \
   --privileged \
@@ -73,7 +91,7 @@ sudo docker run --rm -d \
 The following image runs Qwen3.5 2B W4A16-g128 on RK3576:
 
 ```bash
-sudo docker run --rm -d \
+sudo docker run --rm -it \
   --name rkllm-vlm \
   --privileged \
   -p 8001:8001 \
@@ -170,7 +188,7 @@ and an RKNN vision encoder.
 Mount one platform-compatible `.rkllm` file into the model-free image:
 
 ```bash
-sudo docker run --rm -d \
+sudo docker run --rm -it \
   --name rkllm-llm \
   --privileged \
   -p 8001:8001 \
@@ -193,7 +211,7 @@ Mount the paired `.rkllm` language model and `.rknn` vision encoder, and select
 the VLM backend explicitly:
 
 ```bash
-sudo docker run --rm -d \
+sudo docker run --rm -it \
   --name rkllm-vlm \
   --privileged \
   -p 8001:8001 \
