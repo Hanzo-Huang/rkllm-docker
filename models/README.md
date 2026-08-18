@@ -15,7 +15,7 @@ An LLM definition contains:
 MODEL_URL=https://example.com/Qwen3-4B_RK3576_w8a8.rkllm
 MODEL_FILE=Qwen3-4B_RK3576_w8a8.rkllm
 RKLLM_TOOLKIT_VERSION=1.2.3
-MODEL_SHA256=optional-lowercase-sha256
+MODEL_SHA256=lowercase-sha256
 ```
 
 A complete VLM definition contains both model artifacts and the vision runtime
@@ -28,8 +28,8 @@ MODEL_FILE=Qwen3.5-4B_RK3576_w8a8.rkllm
 VISION_MODEL_URL=https://example.com/Qwen3.5-4B_vision_RK3576.rknn
 VISION_MODEL_FILE=Qwen3.5-4B_vision_RK3576.rknn
 RKLLM_TOOLKIT_VERSION=1.3.0
-MODEL_SHA256=optional-lowercase-sha256
-VISION_MODEL_SHA256=optional-lowercase-sha256
+MODEL_SHA256=lowercase-sha256
+VISION_MODEL_SHA256=lowercase-sha256
 VLM_IMAGE_SIZE=392
 ```
 
@@ -46,10 +46,19 @@ Qwen3.5-4B_vision_RK3576.rknn
 Do not use the older form where the platform appears after the quantization,
 such as `Qwen3-4B_w8a8_RK3576.rkllm`.
 
+For all future group-size-128 W4A16 conversions, use the `w4a16-g128`
+definition name and image-tag suffix; its corresponding filename contains
+`w4a16_g128`. Do not create new `w4a16` definitions. The older `w4a16` name is
+retained only for existing artifacts and compatibility. Every committed
+artifact definition includes a SHA256 checksum so the build workflow verifies
+the download before creating an image.
+
 The runtime selects 2 RKNN cores for RK3576 and 3 for RK3588/RK3588S from
 `TARGET_PLATFORM`. The `.rkllm` and `.rknn` files must target the same platform.
 
-`RKLLM_TOOLKIT_VERSION` records the toolkit used to create the `.rkllm` file.
+**Toolkit version:** `RKLLM_TOOLKIT_VERSION` records the toolkit used to create
+the `.rkllm` file. It is intentionally kept as a separate, prominent field so
+the conversion version is easy to identify before building an image.
 `MODEL_URL` and `VISION_MODEL_URL` must be direct download URLs, such as
 Hugging Face `/resolve/main/...` URLs. Model binaries are downloaded during
 the image build and are not committed to Git.

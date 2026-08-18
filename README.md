@@ -27,7 +27,7 @@ and HTTP server so models can be compared with one Docker command.
 - ARM64 images for RK3576 and RK3588-family devices
 - LLM images with OpenAI-compatible and Ollama-compatible APIs
 - VLM images with OpenAI-compatible image chat
-- Streaming responses, host-mounted models, and optional SHA-256 checks
+- Streaming responses, host-mounted models, and SHA-256 checks
 - RK3576 benchmark data for the configured LLM models
 
 This is a personal testing project, not a production inference platform.
@@ -141,13 +141,27 @@ Images follow this naming convention:
 ghcr.io/hanzo-huang/rkllm-docker/<llm-or-vlm>/<model>:<platform>-<quantization>
 ```
 
-| LLM model | RK3576 W4A16 | RK3576 W8A8 | RK3588 W8A8 |
-| --- | :---: | :---: | :---: |
-| Gemma 3 4B IT | ✅ | ✅ | ✅ |
-| Qwen2.5 1.5B Instruct | ✅ | ✅ | ✅ |
-| Qwen2.5 3B Instruct | ✅ | ✅ | ✅ |
-| Qwen3 1.7B | ✅ | ✅ | ✅ |
-| Qwen3 4B | ✅ | ✅ | ✅ |
+| LLM model | RK3576 W4A16 | RK3576 W4A16-g128 | RK3576 W8A8 | RK3588 W8A8 |
+| --- | :---: | :---: | :---: | :---: |
+| Gemma 3 4B IT (LLM-only conversion) | ✅ | — | ✅ | ✅ |
+| Gemma 4 E2B IT (LLM-only conversion) | — | ✅ | ✅ | ✅ |
+| Llama 3.2 1B Instruct | — | ✅ | ✅ | ✅ |
+| Llama 3.2 3B Instruct | — | ✅ | ✅ | ✅ |
+| MiniCPM3 4B | — | ✅ | ✅ | ✅ |
+| MiniCPM4 0.5B | — | ✅ | ✅ | ✅ |
+| Qwen2 0.5B Instruct | — | ✅ | ✅ | ✅ |
+| Qwen2.5 1.5B Instruct | ✅ | — | ✅ | ✅ |
+| Qwen2.5 3B Instruct | ✅ | — | ✅ | ✅ |
+| Qwen3 1.7B | ✅ | ✅ | ✅ | ✅ |
+| Qwen3 4B | ✅ | ✅ | ✅ | ✅ |
+
+For future W4A16 conversions, use **W4A16-g128** (`w4a16-g128` in image tags
+and definition names) instead of W4A16 (`w4a16`). The older `w4a16` variant
+remains listed only for existing model artifacts and compatibility.
+
+Gemma 3 4B IT and Gemma 4 E2B IT are VLM-capable upstream models, but their
+RKLLM repositories contain only language-model artifacts. In this project they
+are LLM images and do not accept image input.
 
 VLM images use a separate package namespace and include both the RKLLM language
 model and RKNN vision encoder:
@@ -156,6 +170,12 @@ model and RKNN vision encoder:
 | --- | :---: | :---: | :---: |
 | Qwen3.5 2B | ✅ | ✅ | ✅ |
 | Qwen3.5 4B | ✅ | ✅ | ✅ |
+
+Toolkit versions are recorded in every model definition and model card:
+
+- **RKLLM Toolkit v1.2.3:** Gemma 3 4B IT, Qwen2.5 1.5B, Qwen2.5 3B, and Qwen3 4B.
+- **RKLLM Toolkit v1.3.0:** MiniCPM3 4B, MiniCPM4 0.5B, Qwen2 0.5B, Qwen3 1.7B,
+  Llama 3.2 1B/3B, Gemma 4 E2B IT, and Qwen3.5 2B/4B.
 
 Example VLM image:
 
@@ -319,7 +339,7 @@ curl http://localhost:8001/api/chat \
 4. Send the same prompts and settings to each test candidate.
 5. Record the device, runtime, model, quantization, memory, and token speed with the result.
 
-Already-converted Qwen and Gemma models can skip the conversion step by using a published model image. Other model families—such as DeepSeek, GLM, or Llama—require a compatible `.rkllm` conversion and enough device memory.
+Already-converted Qwen, Gemma, Llama, and MiniCPM models can skip the conversion step by using a published model image. Other model families—such as DeepSeek or GLM—require a compatible `.rkllm` conversion and enough device memory.
 
 ## Performance
 
@@ -401,7 +421,7 @@ Changes under `app/`, `docker/`, `runtime/`, `scripts/`, or `requirements.txt` r
 ### Add a Model Image
 
 1. Create `models/<llm-or-vlm>/<model-id>/<platform>/<quantization>.env`.
-2. Add the direct model URL, file name, and optional checksum. The platform is
+2. Add the direct model URL, file name, and checksum. The platform is
    derived from its directory.
 3. Commit the definition and run **Actions → Build model images → Run workflow**.
 
@@ -424,7 +444,7 @@ tags and prevents platform images from overwriting each other.
 MODEL_URL=https://huggingface.co/<account>/<repo>/resolve/main/path/model.rkllm
 MODEL_FILE=model.rkllm
 RKLLM_TOOLKIT_VERSION=1.2.3
-MODEL_SHA256=
+MODEL_SHA256=<lowercase-sha256>
 ```
 
 Use a direct `/resolve/` URL, not a `/blob/` page. Never commit access tokens. For a private model, configure the `MODEL_DOWNLOAD_TOKEN` repository secret.
