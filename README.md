@@ -143,6 +143,7 @@ ghcr.io/hanzo-huang/rkllm-docker/<llm-or-vlm>/<model>:<platform>-<quantization>
 
 | LLM model | RK3576 W4A16 | RK3576 W4A16-g128 | RK3576 W8A8 | RK3588 W8A8 |
 | --- | :---: | :---: | :---: | :---: |
+| DeepSeek R1 Distill Qwen 1.5B | — | ✅ | ✅ | ✅ |
 | Gemma 3 4B IT (LLM-only conversion) | ✅ | — | ✅ | ✅ |
 | Gemma 4 E2B IT (LLM-only conversion) | — | ✅ | ✅ | ✅ |
 | Llama 3.2 1B Instruct | — | ✅ | ✅ | ✅ |
@@ -174,8 +175,9 @@ model and RKNN vision encoder:
 Toolkit versions are recorded in every model definition and model card:
 
 - **RKLLM Toolkit v1.2.3:** Gemma 3 4B IT, Qwen2.5 1.5B, Qwen2.5 3B, and Qwen3 4B.
-- **RKLLM Toolkit v1.3.0:** MiniCPM3 4B, MiniCPM4 0.5B, Qwen2 0.5B, Qwen3 1.7B,
-  Llama 3.2 1B/3B, Gemma 4 E2B IT, and Qwen3.5 2B/4B.
+- **RKLLM Toolkit v1.3.0:** DeepSeek R1 Distill Qwen 1.5B, MiniCPM3 4B,
+  MiniCPM4 0.5B, Qwen2 0.5B, Qwen3 1.7B, Llama 3.2 1B/3B,
+  Gemma 4 E2B IT, and Qwen3.5 2B/4B.
 
 Example VLM image:
 
@@ -339,7 +341,10 @@ curl http://localhost:8001/api/chat \
 4. Send the same prompts and settings to each test candidate.
 5. Record the device, runtime, model, quantization, memory, and token speed with the result.
 
-Already-converted Qwen, Gemma, Llama, and MiniCPM models can skip the conversion step by using a published model image. Other model families—such as DeepSeek or GLM—require a compatible `.rkllm` conversion and enough device memory.
+Already-converted Qwen, Gemma, Llama, MiniCPM, and DeepSeek R1 Distill Qwen
+models can skip the conversion step by using a published model image. Other
+model families—such as GLM—require a compatible `.rkllm` conversion and enough
+device memory.
 
 ## Performance
 
