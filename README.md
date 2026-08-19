@@ -319,6 +319,60 @@ curl http://localhost:8001/v1/chat/completions \
   }'
 ```
 
+### Thinking / reasoning output
+
+Both servers accept the same thinking controls on `POST /v1/chat/completions`:
+
+```json
+{
+  "messages": [{"role": "user", "content": "Solve 17 * 19."}],
+  "enable_thinking": true,
+  "stream": false
+}
+```
+
+When the model emits `<think>...</think>`, the server removes those markers
+and returns the two channels separately:
+
+```json
+{
+  "message": {
+    "role": "assistant",
+    "reasoning_content": "17 * 20 - 17 = 323.",
+    "content": "323"
+  }
+}
+```
+
+For streaming, reasoning is emitted in `choices[0].delta.reasoning_content`
+and the answer in `choices[0].delta.content`; `<think>` tags are never sent to
+the client. Set `"enable_thinking": false` to suppress reasoning. The server
+also accepts `thinking: {"type": "enabled"|"disabled"}` and
+`reasoning_effort: "none"`/`"low"`/`"medium"`/`"high"` as compatible aliases.
+
+Explicit reasoning support is model-dependent. In the model set configured by
+this repository, the known families are:
+
+| Model family | Thinking switch | Notes |
+| --- | :---: | --- |
+| DeepSeek-R1-Distill-Qwen | — | Reasoning is intrinsic to the tested RK3576 artifact; it is separated into `reasoning_content`, but this artifact does not honor the thinking on/off switch. |
+| Qwen3 1.7B / 4B | ✅ | Native RKLLM thinking switch. |
+| Qwen3.5 2B / 4B VLM | ✅ | Native text reasoning plus image input. |
+| Qwen2 / Qwen2.5, Llama 3.2, MiniCPM3/4, Gemma 3/4 | — | No native RKLLM thinking capability is advertised. |
+
+`GET /v1/models` reports `reasoning.supported`, `reasoning.thinking_control`,
+and the corresponding `capabilities` entries based on the model filename. A
+model may still return literal reasoning text without `<think>` tags; the
+response parser recognizes the RK3576 DeepSeek output pattern and keeps the
+OpenAI API channels well-formed in that case.
+
+Thinking is enabled by default for detected reasoning model families, so the
+response contains both `reasoning_content` and `content`. Set
+`enable_thinking: false` to suppress reasoning. For reasoning-only artifacts
+such as the tested DeepSeek-R1 conversion, the server reserves additional
+internal generation room so a small visible `max_tokens` value can still
+produce the final answer.
+
 ### Ollama-Compatible Example
 
 ```bash

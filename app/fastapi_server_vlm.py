@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -35,6 +36,160 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from PIL import Image
 from pydantic import BaseModel, Field
+
+
+@dataclass(frozen=True)
+class OutputDelta:
+    """One protocol-visible piece of generated output."""
+    channel: str
+    text: str
+
+
+class ThinkingStreamParser:
+    """Separate reasoning from the answer across arbitrary callback chunks."""
+
+    START_MARKERS = (
+        "<thinking>",
+        "<think>",
+        "Thinking Process:",
+        "Okay, so I need",
+        "Okay, I need",
+        "Let me think",
+        "Let's think",
+        "The user wants",
+        "I need to",
+        "Let's analyze",
+        "We need to",
+    )
+    UNMARKED_START_MARKERS = (
+        "Okay, so I need",
+        "Okay, I need",
+        "Let me think",
+        "Let's think",
+        "The user wants",
+        "I need to",
+        "Let's analyze",
+        "We need to",
+    )
+    END_MARKERS = (
+        "</thinking>",
+        "</think>",
+        "Final Answer:",
+        "Final answer:",
+        "*Drafting the response:*",
+        "Drafting the response:",
+    )
+
+    def __init__(self, enabled: bool = False):
+        self.enabled = bool(enabled)
+        self.in_thinking = False
+        self._buffer = ""
+
+    @staticmethod
+    def _marker_at(text: str, start: int, markers: tuple[str, ...]) -> Optional[str]:
+        matches = [marker for marker in markers if text.startswith(marker, start)]
+        return max(matches, key=len) if matches else None
+
+    @staticmethod
+    def _partial_suffix(text: str, markers: tuple[str, ...]) -> str:
+        for size in range(min(len(text), max(map(len, markers))), 0, -1):
+            suffix = text[-size:]
+            if any(marker.startswith(suffix) for marker in markers):
+                return suffix
+        return ""
+
+    def feed(self, text: str) -> List[OutputDelta]:
+        if not text:
+            return []
+        self._buffer += text
+        deltas: List[OutputDelta] = []
+        while self._buffer:
+            markers = self.END_MARKERS if self.in_thinking else self.START_MARKERS + self.END_MARKERS
+            found = None
+            for index in range(len(self._buffer)):
+                marker = self._marker_at(self._buffer, index, markers)
+                if marker:
+                    found = (index, marker)
+                    break
+            if found:
+                index, marker = found
+                orphan_end = not self.in_thinking and marker in self.END_MARKERS
+                unmarked_start = (
+                    not self.in_thinking and marker in self.UNMARKED_START_MARKERS
+                )
+                channel = (
+                    "reasoning_content"
+                    if self.in_thinking or orphan_end or unmarked_start
+                    else "content"
+                )
+                value = self._buffer[:index]
+                if unmarked_start:
+                    value = marker + value
+                if value and (channel == "content" or self.enabled):
+                    deltas.append(OutputDelta(channel, value))
+                self._buffer = self._buffer[index + len(marker):]
+                self.in_thinking = (
+                    False
+                    if orphan_end
+                    else True
+                    if unmarked_start
+                    else not self.in_thinking
+                )
+                continue
+            markers_suffix = self._partial_suffix(self._buffer, markers)
+            value = self._buffer[:-len(markers_suffix)] if markers_suffix else self._buffer
+            channel = "reasoning_content" if self.in_thinking else "content"
+            if value and (channel == "content" or self.enabled):
+                deltas.append(OutputDelta(channel, value))
+            self._buffer = markers_suffix
+            break
+        return deltas
+
+    def finish(self) -> List[OutputDelta]:
+        if not self._buffer:
+            return []
+        channel = "reasoning_content" if self.in_thinking else "content"
+        value = self._buffer
+        self._buffer = ""
+        if channel == "reasoning_content" and not self.enabled:
+            return []
+        return [OutputDelta(channel, value)]
+
+
+def _thinking_enabled(
+    enable_thinking: Optional[bool] = None,
+    thinking: Optional[Union[bool, Dict[str, Any]]] = None,
+    reasoning_effort: Optional[str] = None,
+) -> bool:
+    if enable_thinking is not None:
+        return bool(enable_thinking)
+    if isinstance(thinking, bool):
+        return thinking
+    if isinstance(thinking, dict):
+        return str(thinking.get("type", "enabled")).lower() not in {
+            "disabled", "disable", "off", "none", "false"
+        }
+    if reasoning_effort is not None:
+        return str(reasoning_effort).lower() not in {"none", "off", "disabled", "false"}
+    return False
+
+
+def model_supports_reasoning(model_name: str) -> bool:
+    name = str(model_name).lower()
+    return any(family in name for family in ("qwen3", "qwen-3", "deepseek-r1", "deepseek_r1"))
+
+
+def model_supports_thinking(model_name: str) -> bool:
+    """Return whether RKLLM can switch thinking on/off for this model family."""
+    name = str(model_name).lower()
+    return any(family in name for family in ("qwen3", "qwen-3"))
+
+
+def runtime_max_tokens(model_name: str, requested: int, thinking: bool) -> int:
+    """Reserve hidden generation room for reasoning-only model artifacts."""
+    if model_supports_reasoning(model_name):
+        return min(4096, requested + max(512, requested * 2))
+    return requested
 
 
 LOG_LEVELS = ("critical", "error", "warning", "info", "debug")
@@ -105,6 +260,7 @@ class ChatCompletionRequest(BaseModel):
     n: Optional[int] = Field(1, ge=1, le=10)
     stream: Optional[bool] = False
     max_tokens: Optional[int] = Field(512, ge=1, le=4096)
+    max_completion_tokens: Optional[int] = Field(None, ge=1, le=4096)
     presence_penalty: Optional[float] = Field(0.0, ge=-2.0, le=2.0)
     frequency_penalty: Optional[float] = Field(0.0, ge=-2.0, le=2.0)
     stop: Optional[List[str]] = None
@@ -115,6 +271,7 @@ class ChatCompletionRequest(BaseModel):
     enable_thinking: Optional[bool] = None
     reasoning_effort: Optional[str] = None
     thinking: Optional[Union[bool, Dict[str, Any]]] = None
+    repeat_penalty: Optional[float] = Field(1.1, ge=0.0, le=2.0)
 
 
 class UsageInfo(BaseModel):
@@ -123,9 +280,15 @@ class UsageInfo(BaseModel):
     total_tokens: int = 0
 
 
+class AssistantMessage(BaseModel):
+    role: str = "assistant"
+    content: str = ""
+    reasoning_content: Optional[str] = None
+
+
 class ChatCompletionResponseChoice(BaseModel):
     index: int
-    message: Message
+    message: AssistantMessage
     finish_reason: Optional[str] = "stop"
 
 
@@ -142,6 +305,7 @@ class ChatCompletionResponse(BaseModel):
 class DeltaMessage(BaseModel):
     role: Optional[str] = None
     content: Optional[str] = None
+    reasoning_content: Optional[str] = None
 
 
 class ChatCompletionStreamChoice(BaseModel):
@@ -515,12 +679,27 @@ class RKLLMInput(ctypes.Structure):
     ]
 
 
+class RKLLMSamplingParam(ctypes.Structure):
+    """Per-request sampling override introduced by RKLLM v1.3.0."""
+    _fields_ = [
+        ("top_k", ctypes.c_int32),
+        ("top_p", ctypes.c_float),
+        ("temperature", ctypes.c_float),
+        ("repeat_penalty", ctypes.c_float),
+        ("frequency_penalty", ctypes.c_float),
+        ("presence_penalty", ctypes.c_float),
+        ("mirostat", ctypes.c_int32),
+        ("mirostat_tau", ctypes.c_float),
+        ("mirostat_eta", ctypes.c_float),
+    ]
+
+
 class RKLLMInferParam(ctypes.Structure):
     _fields_ = [
         ("mode", ctypes.c_int),
         ("lora_params", ctypes.c_void_p),
         ("prompt_cache_params", ctypes.c_void_p),
-        ("sampling_params", ctypes.c_void_p),
+        ("sampling_params", ctypes.POINTER(RKLLMSamplingParam)),
         ("keep_history", ctypes.c_int),
         ("max_new_tokens", ctypes.c_int32),
     ]
@@ -550,13 +729,36 @@ class RKLLMCallback(ctypes.Structure):
 
 
 class InferenceState:
-    def __init__(self):
-        self.text_queue: List[str] = []
+    def __init__(self, thinking: bool = False):
+        self.text_queue: List[OutputDelta] = []
         self.full_response = ""
+        self.reasoning_response = ""
+        self.finish_reason = "stop"
         self.error: Optional[str] = None
         self.completed = threading.Event()
         self.lock = threading.Lock()
         self.start_time = time.time()
+        self.parser = ThinkingStreamParser(thinking)
+
+    def append_runtime_text(self, text: str) -> None:
+        for marker in ("<｜end▁of▁sentence｜>", "<|endoftext|>", "<|im_end|>"):
+            text = text.replace(marker, "")
+        for delta in self.parser.feed(text):
+            self.text_queue.append(delta)
+            if delta.channel == "reasoning_content":
+                self.reasoning_response += delta.text
+            else:
+                self.full_response += delta.text
+
+    def finish_output(self) -> None:
+        if self.parser.in_thinking:
+            self.finish_reason = "length"
+        for delta in self.parser.finish():
+            self.text_queue.append(delta)
+            if delta.channel == "reasoning_content":
+                self.reasoning_response += delta.text
+            else:
+                self.full_response += delta.text
 
 
 request_states: Dict[str, InferenceState] = {}
@@ -580,6 +782,8 @@ class RKLLMRuntime:
         self.lib = ctypes.CDLL("/usr/lib/librkllmrt.so", mode=ctypes.RTLD_GLOBAL)
         self.handle = ctypes.c_void_p()
         self.lock = threading.Lock()
+        self.config = config
+        self.platform = platform.lower()
         self._setup_signatures()
 
         self._callback = LLMResultCallbackType(self._callback_impl)
@@ -605,10 +809,13 @@ class RKLLMRuntime:
         params.mirostat = 0
         params.mirostat_tau = 5.0
         params.mirostat_eta = 0.1
-        params.skip_special_token = True
+        # Keep <think>/</think> markers visible to the protocol parser.
+        params.skip_special_token = False
         params.ignore_eos_token = False
         params.is_async = False
-        params.extend_param.base_domain_id = 0
+        params.extend_param.base_domain_id = (
+            1 if self.platform in {"rk3576", "rk3588", "rk3588s"} else 0
+        )
         params.extend_param.embed_flash = 0
         params.extend_param.enabled_cpus_num = 4
         params.extend_param.enabled_cpus_mask = 0xF0
@@ -652,12 +859,12 @@ class RKLLMRuntime:
             with state.lock:
                 if state_code == self.RKLLM_RUN_NORMAL and result_ptr and result_ptr.contents.text:
                     text = result_ptr.contents.text.decode("utf-8", errors="ignore")
-                    state.text_queue.append(text)
-                    state.full_response += text
+                    state.append_runtime_text(text)
                 elif state_code == self.RKLLM_RUN_ERROR:
                     state.error = "RKLLM runtime error"
                     state.completed.set()
                 elif state_code == self.RKLLM_RUN_FINISH:
+                    state.finish_output()
                     state.completed.set()
             return 0
         except Exception as error:
@@ -672,6 +879,13 @@ class RKLLMRuntime:
         image_width: int = 0,
         image_height: int = 0,
         enable_thinking: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        frequency_penalty: float = 0.0,
+        presence_penalty: float = 0.0,
+        repeat_penalty: float = 1.1,
+        max_tokens: Optional[int] = None,
     ) -> InferenceState:
         state = request_states[request_id]
         prompt_buffer = ctypes.create_string_buffer(prompt.encode("utf-8"))
@@ -707,9 +921,21 @@ class RKLLMRuntime:
         infer_params.mode = self.RKLLM_INFER_GENERATE
         infer_params.lora_params = None
         infer_params.prompt_cache_params = None
-        infer_params.sampling_params = None
+        sampling_params = RKLLMSamplingParam()
+        sampling_params.top_k = top_k or self.config.default_top_k
+        sampling_params.top_p = top_p if top_p is not None else self.config.default_top_p
+        sampling_params.temperature = (
+            temperature if temperature is not None else self.config.default_temperature
+        )
+        sampling_params.repeat_penalty = repeat_penalty
+        sampling_params.frequency_penalty = frequency_penalty
+        sampling_params.presence_penalty = presence_penalty
+        sampling_params.mirostat = 0
+        sampling_params.mirostat_tau = 5.0
+        sampling_params.mirostat_eta = 0.1
+        infer_params.sampling_params = ctypes.pointer(sampling_params)
         infer_params.keep_history = 0
-        infer_params.max_new_tokens = 0
+        infer_params.max_new_tokens = max_tokens or 0
 
         with self.lock:
             ret = self.lib.rkllm_run(
@@ -833,18 +1059,17 @@ def estimate_tokens(text: str) -> int:
 
 def thinking_enabled(request: ChatCompletionRequest) -> bool:
     """Normalize thinking controls used by OpenAI-compatible clients."""
-    if request.enable_thinking is not None:
-        return request.enable_thinking
-
-    if isinstance(request.thinking, bool):
-        return request.thinking
-    if isinstance(request.thinking, dict):
-        mode = str(request.thinking.get("type", "enabled")).lower()
-        return mode not in {"disabled", "off", "none"}
-
-    if request.reasoning_effort:
-        return request.reasoning_effort.lower() not in {"none", "off", "disabled"}
-    return False
+    enabled = _thinking_enabled(
+        request.enable_thinking, request.thinking, request.reasoning_effort
+    )
+    if (
+        request.enable_thinking is None
+        and request.thinking is None
+        and request.reasoning_effort is None
+        and model_supports_reasoning(config.llm_model_path)
+    ):
+        enabled = True
+    return enabled
 
 
 def execute_inference(
@@ -852,6 +1077,13 @@ def execute_inference(
     prompt: str,
     image_url: Optional[str],
     enable_thinking: bool = False,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    frequency_penalty: float = 0.0,
+    presence_penalty: float = 0.0,
+    repeat_penalty: float = 1.1,
+    max_tokens: Optional[int] = None,
 ) -> InferenceState:
     state = request_states[request_id]
     started = time.time()
@@ -879,6 +1111,13 @@ def execute_inference(
             image_width,
             image_height,
             enable_thinking=enable_thinking,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            repeat_penalty=repeat_penalty,
+            max_tokens=max_tokens,
         )
         if result.error:
             logger.error("[%s] request failed: %s", request_id, result.error)
@@ -892,8 +1131,22 @@ def execute_inference(
         return state
 
 
-def openai_chunk(request_id: str, created: int, model: str, content: Optional[str] = None,
-                 role: Optional[str] = None, finish_reason: Optional[str] = None) -> str:
+def openai_chunk(
+    request_id: str,
+    created: int,
+    model: str,
+    content: Optional[str] = None,
+    reasoning_content: Optional[str] = None,
+    role: Optional[str] = None,
+    finish_reason: Optional[str] = None,
+) -> str:
+    delta_data: Dict[str, str] = {}
+    if role is not None:
+        delta_data["role"] = role
+    if content is not None:
+        delta_data["content"] = content
+    if reasoning_content is not None:
+        delta_data["reasoning_content"] = reasoning_content
     chunk = ChatCompletionStreamResponse(
         id=request_id,
         created=created,
@@ -901,7 +1154,7 @@ def openai_chunk(request_id: str, created: int, model: str, content: Optional[st
         choices=[
             ChatCompletionStreamChoice(
                 index=0,
-                delta=DeltaMessage(role=role, content=content),
+                delta=DeltaMessage(**delta_data),
                 finish_reason=finish_reason,
             )
         ],
@@ -926,6 +1179,17 @@ async def stream_completion(request: ChatCompletionRequest, request_id: str, cre
             prompt,
             image_url,
             thinking_enabled(request),
+            request.temperature,
+            request.top_p,
+            request.top_k,
+            request.frequency_penalty or 0.0,
+            request.presence_penalty or 0.0,
+            request.repeat_penalty or 1.1,
+            runtime_max_tokens(
+                config.llm_model_path,
+                request.max_completion_tokens or request.max_tokens,
+                enable_thinking,
+            ),
         )
         yield openai_chunk(request_id, created, request.model, role="assistant")
         last_activity = time.time()
@@ -937,15 +1201,26 @@ async def stream_completion(request: ChatCompletionRequest, request_id: str, cre
                     state.text_queue.clear()
                     completed = state.completed.is_set()
                     error = state.error
-                for text in pending:
-                    yield openai_chunk(request_id, created, request.model, content=text)
+                for delta in pending:
+                    yield openai_chunk(
+                        request_id,
+                        created,
+                        request.model,
+                        content=delta.text if delta.channel == "content" else None,
+                        reasoning_content=(
+                            delta.text if delta.channel == "reasoning_content" else None
+                        ),
+                    )
                     last_activity = time.time()
                 if completed:
                     if error:
                         yield f"data: {json.dumps({'error': {'message': error}})}\n\n"
                     else:
                         yield openai_chunk(
-                            request_id, created, request.model, finish_reason="stop"
+                            request_id,
+                            created,
+                            request.model,
+                            finish_reason=state.finish_reason,
                         )
                     yield "data: [DONE]\n\n"
                     break
@@ -1058,6 +1333,8 @@ async def health_check():
 
 @app.get("/v1/models")
 async def list_models():
+    reasoning_supported = model_supports_reasoning(config.llm_model_path)
+    thinking_supported = model_supports_thinking(config.llm_model_path)
     return {
         "object": "list",
         "data": [{
@@ -1068,15 +1345,26 @@ async def list_models():
             # These are optional vendor metadata fields. Standard OpenAI
             # clients ignore unknown fields; clients such as Cherry Studio
             # can use them when capability discovery is supported.
-            "capabilities": ["vision", "reasoning", "thinking"],
+            "capabilities": (
+                ["vision"]
+                + (["reasoning"] if reasoning_supported else [])
+                + (["thinking"] if thinking_supported else [])
+            ),
             "input_modalities": ["text", "image"],
             "output_modalities": ["text"],
-            "reasoning": {"supported": True},
+            "reasoning": {
+                "supported": reasoning_supported,
+                "thinking_control": thinking_supported,
+            },
         }],
     }
 
 
-@app.post("/v1/chat/completions")
+@app.post(
+    "/v1/chat/completions",
+    response_model=ChatCompletionResponse,
+    response_model_exclude_none=True,
+)
 async def create_chat_completion(request: ChatCompletionRequest):
     if runtime is None:
         raise HTTPException(status_code=503, detail="VLM runtime is not initialized")
@@ -1088,7 +1376,7 @@ async def create_chat_completion(request: ChatCompletionRequest):
     reserve_request_slot()
     request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(time.time())
-    request_states[request_id] = InferenceState()
+    request_states[request_id] = InferenceState(thinking=thinking_enabled(request))
     logger.info(
         "[%s] request accepted: stream=%s messages=%s image=%s model=%s",
         request_id,
@@ -1113,11 +1401,22 @@ async def create_chat_completion(request: ChatCompletionRequest):
             prompt,
             image_url,
             thinking_enabled(request),
+            request.temperature,
+            request.top_p,
+            request.top_k,
+            request.frequency_penalty or 0.0,
+            request.presence_penalty or 0.0,
+            request.repeat_penalty or 1.1,
+            runtime_max_tokens(
+                config.llm_model_path,
+                request.max_completion_tokens or request.max_tokens,
+                thinking_enabled(request),
+            ),
         )
         if state.error:
             raise HTTPException(status_code=500, detail=state.error)
         prompt_tokens = estimate_tokens(prompt)
-        completion_tokens = estimate_tokens(state.full_response)
+        completion_tokens = estimate_tokens(state.full_response + state.reasoning_response)
         return ChatCompletionResponse(
             id=request_id,
             created=created,
@@ -1125,8 +1424,15 @@ async def create_chat_completion(request: ChatCompletionRequest):
             choices=[
                 ChatCompletionResponseChoice(
                     index=0,
-                    message=Message(role="assistant", content=state.full_response),
-                    finish_reason="stop",
+                    message=AssistantMessage(
+                        content=state.full_response,
+                        **(
+                            {"reasoning_content": state.reasoning_response}
+                            if state.reasoning_response
+                            else {}
+                        ),
+                    ),
+                    finish_reason=state.finish_reason,
                 )
             ],
             usage=UsageInfo(

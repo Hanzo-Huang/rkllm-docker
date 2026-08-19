@@ -56,6 +56,13 @@ the download before creating an image.
 The runtime selects 2 RKNN cores for RK3576 and 3 for RK3588/RK3588S from
 `TARGET_PLATFORM`. The `.rkllm` and `.rknn` files must target the same platform.
 
+The application runtime in this repository is RKLLM v1.3.0. Its ABI is the
+v1.3.0 `rkllm.h` layout: `ignore_eos_token` is present in `RKLLMParam`, image
+marker strings are supplied in `RKLLMMultiModalInput.image`, and per-request
+sampling/max-token overrides are supplied through `RKLLMInferParam`. Do not
+copy the older v1.2.x `RKLLMParam` layout into the server; the field offsets
+are different.
+
 **Toolkit version:** `RKLLM_TOOLKIT_VERSION` records the toolkit used to create
 the `.rkllm` file. It is intentionally kept as a separate, prominent field so
 the conversion version is easy to identify before building an image.
