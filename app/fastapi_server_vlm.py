@@ -1165,6 +1165,7 @@ def openai_chunk(
 async def stream_completion(request: ChatCompletionRequest, request_id: str, created: int,
                            prompt: str, image_url: Optional[str]):
     try:
+        enable_thinking = thinking_enabled(request)
         logger.info(
             "[%s] request started: stream=true messages=%s image=%s prompt_chars=%s max_tokens=%s",
             request_id,
@@ -1178,7 +1179,7 @@ async def stream_completion(request: ChatCompletionRequest, request_id: str, cre
             request_id,
             prompt,
             image_url,
-            thinking_enabled(request),
+            enable_thinking,
             request.temperature,
             request.top_p,
             request.top_k,
