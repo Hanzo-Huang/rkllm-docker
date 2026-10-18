@@ -7,7 +7,7 @@ This server uses Rockchip's official runtime APIs directly:
 * librknnrt.so runs the vision encoder and produces image embeddings.
 * librkllmrt.so runs the multimodal RKLLM model.
 
-The ctypes structures below match the RKLLM v1.3.0 runtime; no
+The ctypes structures below match the RKLLM v1.3.1 runtime; no
 project-specific runtime wrapper is required.
 """
 
@@ -387,13 +387,13 @@ class RKNNImageEncoder:
         self.lock = threading.Lock()
         self._setup_signatures()
 
-        with open(model_path, "rb") as model_file:
-            model_data = model_file.read()
-        self.model_data = ctypes.create_string_buffer(model_data)
+        # The C API accepts a filename when size is zero. Avoid retaining a
+        # Python bytes object and a second ctypes copy of large vision models.
+        self.model_data = ctypes.create_string_buffer(os.fsencode(model_path))
         ret = self.lib.rknn_init(
             ctypes.byref(self.ctx),
             ctypes.cast(self.model_data, ctypes.c_void_p),
-            len(model_data),
+            0,
             0,
             None,
         )
@@ -410,6 +410,8 @@ class RKNNImageEncoder:
             for index in range(self.io_num.n_output)
         ]
 
+        if self.io_num.n_input != 1:
+            raise RuntimeError(f"Expected an encoder with position/grid inputs folded at conversion; got {self.io_num.n_input} inputs")
         input_dims = list(self.input_attr.dims[: self.input_attr.n_dims])
         if self.input_attr.fmt == self.RKNN_TENSOR_NCHW:
             self.channels, self.height, self.width = input_dims[-3:]
@@ -512,16 +514,15 @@ class RKNNImageEncoder:
             image = square.resize((self.width, self.height), Image.Resampling.BILINEAR)
             pixels = np.asarray(image, dtype=np.uint8).copy()
 
-            if self.input_attr.fmt == self.RKNN_TENSOR_NCHW:
-                pixels = np.transpose(pixels, (2, 0, 1)).copy()
-
             input_info = RknnInput()
             input_info.index = 0
             input_info.buf = pixels.ctypes.data_as(ctypes.c_void_p)
             input_info.size = pixels.nbytes
             input_info.pass_through = 0
             input_info.type = self.RKNN_TENSOR_UINT8
-            input_info.fmt = self.input_attr.fmt
+            # Submit packed RGB just as RKNN Lite and the SDK image demo do.
+            # rknn_inputs_set converts NHWC into the model's internal layout.
+            input_info.fmt = self.RKNN_TENSOR_NHWC
 
             ret = self.lib.rknn_inputs_set(self.ctx, 1, ctypes.byref(input_info))
             if ret != 0:
@@ -573,160 +574,51 @@ class RKNNImageEncoder:
             self.ctx.value = 0
 
 
-# ==================== Official RKLLM v1.3.0 C API structures ====================
-#
-# Keep these definitions in sync with rkllm.h. v1.3.0 changed the ABI from
-# v1.2.3: RKLLMParam gained ignore_eos_token and no longer contains the image
-# marker strings; those strings now belong to the multimodal image input.
-class RKLLMExtendParam(ctypes.Structure):
-    _fields_ = [
-        ("base_domain_id", ctypes.c_int32),
-        ("embed_flash", ctypes.c_int8),
-        ("enabled_cpus_num", ctypes.c_int8),
-        ("enabled_cpus_mask", ctypes.c_uint32),
-        ("n_batch", ctypes.c_uint8),
-        ("use_cross_attn", ctypes.c_int8),
-        ("reserved", ctypes.c_uint8 * 104),
-    ]
-
-
-class RKLLMParam(ctypes.Structure):
-    _fields_ = [
-        ("model_path", ctypes.c_char_p),
-        ("max_context_len", ctypes.c_int32),
-        ("max_new_tokens", ctypes.c_int32),
-        ("top_k", ctypes.c_int32),
-        ("n_keep", ctypes.c_int32),
-        ("top_p", ctypes.c_float),
-        ("temperature", ctypes.c_float),
-        ("repeat_penalty", ctypes.c_float),
-        ("frequency_penalty", ctypes.c_float),
-        ("presence_penalty", ctypes.c_float),
-        ("mirostat", ctypes.c_int32),
-        ("mirostat_tau", ctypes.c_float),
-        ("mirostat_eta", ctypes.c_float),
-        ("skip_special_token", ctypes.c_bool),
-        ("ignore_eos_token", ctypes.c_bool),
-        ("is_async", ctypes.c_bool),
-        ("extend_param", RKLLMExtendParam),
-    ]
-
-
-class RKLLMEmbedInput(ctypes.Structure):
-    _fields_ = [
-        ("embed", ctypes.POINTER(ctypes.c_float)),
-        ("n_tokens", ctypes.c_size_t),
-    ]
-
-
-class RKLLMTokenInput(ctypes.Structure):
-    _fields_ = [
-        ("input_ids", ctypes.POINTER(ctypes.c_int32)),
-        ("n_tokens", ctypes.c_size_t),
-    ]
-
-
-class RKLLMImageInput(ctypes.Structure):
-    _fields_ = [
-        ("image_embed", ctypes.POINTER(ctypes.c_float)),
-        ("n_image_tokens", ctypes.c_size_t),
-        ("n_image", ctypes.c_size_t),
-        ("image_start", ctypes.c_char_p),
-        ("image_end", ctypes.c_char_p),
-        ("image_content", ctypes.c_char_p),
-        ("image_width", ctypes.c_size_t),
-        ("image_height", ctypes.c_size_t),
-    ]
-
-
-class RKLLMVideoInput(ctypes.Structure):
-    _fields_ = [
-        ("video_embed", ctypes.POINTER(ctypes.c_float)),
-        ("n_frame_tokens", ctypes.c_size_t),
-        ("n_frame_per_video", ctypes.c_size_t),
-        ("n_video", ctypes.c_size_t),
-        ("video_start", ctypes.c_char_p),
-        ("video_end", ctypes.c_char_p),
-        ("video_content", ctypes.c_char_p),
-        ("frame_width", ctypes.c_size_t),
-        ("frame_height", ctypes.c_size_t),
-    ]
-
-
-class RKLLMMultiModalInput(ctypes.Structure):
-    _fields_ = [
-        ("prompt", ctypes.c_char_p),
-        ("image", RKLLMImageInput),
-        ("video", RKLLMVideoInput),
-    ]
-
-
-class RKLLMInputUnion(ctypes.Union):
-    _fields_ = [
-        ("prompt_input", ctypes.c_char_p),
-        ("embed_input", RKLLMEmbedInput),
-        ("token_input", RKLLMTokenInput),
-        ("multimodal_input", RKLLMMultiModalInput),
-    ]
-
-
-class RKLLMInput(ctypes.Structure):
-    _fields_ = [
-        ("role", ctypes.c_char_p),
-        ("enable_thinking", ctypes.c_bool),
-        ("input_type", ctypes.c_int),
-        ("input_data", RKLLMInputUnion),
-    ]
-
-
-class RKLLMSamplingParam(ctypes.Structure):
-    """Per-request sampling override introduced by RKLLM v1.3.0."""
-    _fields_ = [
-        ("top_k", ctypes.c_int32),
-        ("top_p", ctypes.c_float),
-        ("temperature", ctypes.c_float),
-        ("repeat_penalty", ctypes.c_float),
-        ("frequency_penalty", ctypes.c_float),
-        ("presence_penalty", ctypes.c_float),
-        ("mirostat", ctypes.c_int32),
-        ("mirostat_tau", ctypes.c_float),
-        ("mirostat_eta", ctypes.c_float),
-    ]
-
-
-class RKLLMInferParam(ctypes.Structure):
-    _fields_ = [
-        ("mode", ctypes.c_int),
-        ("lora_params", ctypes.c_void_p),
-        ("prompt_cache_params", ctypes.c_void_p),
-        ("sampling_params", ctypes.POINTER(RKLLMSamplingParam)),
-        ("keep_history", ctypes.c_int),
-        ("max_new_tokens", ctypes.c_int32),
-    ]
-
-
-class RKLLMResult(ctypes.Structure):
-    _fields_ = [("text", ctypes.c_char_p), ("token_id", ctypes.c_int32)]
-
-
-LLMResultCallbackType = ctypes.CFUNCTYPE(
-    ctypes.c_int,
-    ctypes.POINTER(RKLLMResult),
-    ctypes.c_void_p,
-    ctypes.c_int,
-)
-
-
-class RKLLMCallback(ctypes.Structure):
-    _fields_ = [
-        ("result_callback", LLMResultCallbackType),
-        ("result_userdata", ctypes.c_void_p),
-        ("tokenizer_callback", ctypes.c_void_p),
-        ("tokenizer_userdata", ctypes.c_void_p),
-        ("embed_callback", ctypes.c_void_p),
-        ("embed_userdata", ctypes.c_void_p),
-    ]
-
+# Shared ABI definitions must match the bundled runtime/include/rkllm.h.
+if __package__:
+    from .rkllm_types import (
+        RKLLMExtendParam,
+        RKLLMParam,
+        RKLLMEmbedInput,
+        RKLLMTokenInput,
+        RKLLMImageInput,
+        RKLLMVideoInput,
+        RKLLMAudioInput,
+        RKLLMMultiModalInput,
+        RKLLMInputUnion,
+        RKLLMInput,
+        RKLLMSamplingParam,
+        RKLLMInferParam,
+        RKLLMResultLastHiddenLayer,
+        RKLLMResultLogits,
+        RKLLMPerfStat,
+        RKLLMResult,
+        RKLLMCallback,
+        callback_type,
+        LLMResultCallbackType,
+    )
+else:
+    from rkllm_types import (
+        RKLLMExtendParam,
+        RKLLMParam,
+        RKLLMEmbedInput,
+        RKLLMTokenInput,
+        RKLLMImageInput,
+        RKLLMVideoInput,
+        RKLLMAudioInput,
+        RKLLMMultiModalInput,
+        RKLLMInputUnion,
+        RKLLMInput,
+        RKLLMSamplingParam,
+        RKLLMInferParam,
+        RKLLMResultLastHiddenLayer,
+        RKLLMResultLogits,
+        RKLLMPerfStat,
+        RKLLMResult,
+        RKLLMCallback,
+        callback_type,
+        LLMResultCallbackType,
+    )
 
 class InferenceState:
     def __init__(self, thinking: bool = False):
@@ -741,7 +633,7 @@ class InferenceState:
         self.parser = ThinkingStreamParser(thinking)
 
     def append_runtime_text(self, text: str) -> None:
-        for marker in ("<｜end▁of▁sentence｜>", "<|endoftext|>", "<|im_end|>"):
+        for marker in ("<｜end▁of▁sentence｜>", "<|endoftext|>", "<|im_end|>", "<turn|>"):
             text = text.replace(marker, "")
         for delta in self.parser.feed(text):
             self.text_queue.append(delta)
@@ -769,7 +661,7 @@ runtime = None
 
 
 class RKLLMRuntime:
-    """Direct wrapper around the official RKLLM v1.3.0 runtime."""
+    """Direct wrapper around the official RKLLM v1.3.1 runtime."""
 
     RKLLM_INPUT_PROMPT = 0
     RKLLM_INPUT_MULTIMODAL = 3
@@ -816,7 +708,7 @@ class RKLLMRuntime:
         params.extend_param.base_domain_id = (
             1 if self.platform in {"rk3576", "rk3588", "rk3588s"} else 0
         )
-        params.extend_param.embed_flash = 0
+        params.extend_param.embed_flash = config.embed_flash
         params.extend_param.enabled_cpus_num = 4
         params.extend_param.enabled_cpus_mask = 0xF0
         params.extend_param.n_batch = 1
@@ -829,6 +721,18 @@ class RKLLMRuntime:
         )
         if ret != 0:
             raise RuntimeError(f"rkllm_init failed with code {ret}")
+        if config.model_family == "gemma4":
+            # Recent checkpoints ship a separate, complex chat_template.jinja
+            # which the native parser cannot infer from tokenizer_config.json.
+            self.lib.rkllm_set_chat_template.argtypes = [
+                ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+            ]
+            self.lib.rkllm_set_chat_template.restype = ctypes.c_int
+            ret = self.lib.rkllm_set_chat_template(
+                self.handle, b"", b"", b"",
+            )
+            if ret != 0:
+                raise RuntimeError(f"Setting Gemma4 chat template failed with code {ret}")
         logger.info("RKLLM runtime initialized with official librkllmrt.so")
 
     def _setup_signatures(self) -> None:
@@ -955,13 +859,21 @@ class RKLLMRuntime:
             self.handle = None
 
 
+if __package__:
+    from .vlm_profiles import resolve_profile, format_gemma4_chat
+else:
+    from vlm_profiles import resolve_profile, format_gemma4_chat
+
+
 class ServerConfig:
     def __init__(self):
         self.model_name = os.environ.get("API_MODEL_NAME") or "rkllm-vision"
+        self.model_family = "qwen"
         self.encoder_model_path = ""
         self.llm_model_path = ""
         self.platform = "rk3588"
         self.max_context_len = 2048
+        self.embed_flash = 0
         self.default_temperature = 0.7
         self.default_top_p = 1.0
         self.default_top_k = 1
@@ -1033,6 +945,7 @@ def message_parts(message: Message) -> Tuple[str, Optional[str]]:
 def build_prompt(messages: List[Message]) -> Tuple[str, Optional[str]]:
     prompt_parts = []
     image_url = None
+    gemma_turns = []
     for message in messages:
         text, message_image = message_parts(message)
         if message_image:
@@ -1040,12 +953,17 @@ def build_prompt(messages: List[Message]) -> Tuple[str, Optional[str]]:
                 raise ValueError("Only one image is supported per request")
             image_url = message_image
             text = "<image>" + text
+        gemma_turns.append((message.role, text))
         if message.role == "system":
             prompt_parts.append(f"System: {text}\n")
         elif message.role == "assistant":
             prompt_parts.append(f"Assistant: {text}\n")
         else:
             prompt_parts.append(f"Human: {text}\n")
+    if config.model_family == "gemma4" and gemma_turns:
+        # Native auto-parsing is disabled for Gemma4. Render complete turns
+        # here so system instructions and assistant history retain their roles.
+        return format_gemma4_chat(gemma_turns), image_url
     prompt = "".join(prompt_parts)
     if not prompt.rstrip().endswith("Assistant:"):
         prompt += "Assistant:"
@@ -1461,6 +1379,9 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--max_context_len", type=int, default=2048)
+    parser.add_argument("--embed_flash", type=int, choices=(0, 1),
+                        default=int(os.environ.get("RKLLM_EMBED_FLASH", "0")),
+                        help="Read embeddings from storage instead of loading them into RAM")
     parser.add_argument("--default_temperature", type=float, default=0.7)
     parser.add_argument("--default_top_p", type=float, default=1.0)
     parser.add_argument("--default_top_k", type=int, default=1)
@@ -1468,9 +1389,10 @@ if __name__ == "__main__":
     parser.add_argument("--max_concurrent", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--rknn_core_num", type=int, default=None)
-    parser.add_argument("--img_start", default="<|vision_start|>")
-    parser.add_argument("--img_end", default="<|vision_end|>")
-    parser.add_argument("--img_content", default="<|image_pad|>")
+    parser.add_argument("--model_family", choices=("auto", "qwen", "gemma4"), default=os.environ.get("VLM_MODEL_FAMILY", "auto"))
+    parser.add_argument("--img_start", default=None)
+    parser.add_argument("--img_end", default=None)
+    parser.add_argument("--img_content", default=None)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
         "--log_level",
@@ -1494,6 +1416,7 @@ if __name__ == "__main__":
     config.model_name = args.model_name
     config.platform = args.target_platform
     config.max_context_len = args.max_context_len
+    config.embed_flash = args.embed_flash
     config.default_temperature = args.default_temperature
     config.default_top_p = args.default_top_p
     config.default_top_k = args.default_top_k
@@ -1507,9 +1430,11 @@ if __name__ == "__main__":
         if args.rknn_core_num is not None
         else platform_npu_core_limit(args.target_platform)
     )
-    config.img_start = args.img_start
-    config.img_end = args.img_end
-    config.img_content = args.img_content
+    profile = resolve_profile(config.llm_model_path, args.model_family)
+    config.model_family = profile.family
+    config.img_start = profile.image_start if args.img_start is None else args.img_start
+    config.img_end = profile.image_end if args.img_end is None else args.img_end
+    config.img_content = profile.image_content if args.img_content is None else args.img_content
     logger.info(
         "Configuration: vision_model=%s llm_model=%s platform=%s host=%s "
         "port=%s api_model=%s vision_cores=%s context=%s temperature=%s "

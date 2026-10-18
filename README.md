@@ -34,7 +34,7 @@ This is a personal testing project, not a production inference platform.
 
 ## Bundled Versions
 
-- RKLLM runtime: `v1.3.0`
+- RKLLM runtime: `v1.3.1`
 - RKNN Toolkit Lite 2 wheel: `v2.3.2`
 
 The RKLLM Toolkit version used to convert a model is stored in that model's
@@ -186,7 +186,7 @@ ghcr.io/hanzo-huang/rkllm-docker/vlm/qwen3.5-2b:rk3576-w4a16-g128
 ```
 
 Model image tags use `<platform>-<quantization>`; runtime environment tags use
-the RKLLM runtime version, currently `1.3.0`.
+the RKLLM runtime version, currently `1.3.1`.
 
 Model licenses and usage restrictions are determined by their original authors. Review them before deployment or redistribution.
 
@@ -264,6 +264,9 @@ available for the VLM server; use its HTTP API for image requests.
 | `API_MODEL_NAME` | `rkllm-model` for LLM, `rkllm-vision` for VLM | Model name | Optional stable public name returned by `/v1/models` and API responses. |
 | `VISION_MODEL_PATH` | empty | Container file path | RKNN vision encoder path for VLM images. |
 | `VISION_MODEL_FILE` | empty | Filename under `/app/models` | Select the VLM vision encoder by filename; overrides `VISION_MODEL_PATH` when set. |
+| `VLM_MODEL_FAMILY` | `auto` | `auto`, `qwen`, `gemma4` | Select image markers and chat formatting; auto detects Gemma4 from the language-model filename. |
+| `RKLLM_EMBED_FLASH` | `0` | `0`, `1` | VLM backend: read word embeddings from storage with `1` to reduce RAM use. |
+| `VLM_IMAGE_START`, `VLM_IMAGE_END`, `VLM_IMAGE_CONTENT` | Model profile | Marker strings | Optional overrides for the native image-token markers. Empty overrides are preserved. |
 | `TARGET_PLATFORM` | `auto` | `auto`, `rk3576`, `rk3588`, `rk3588s` | Select or detect the target SoC. |
 | `RUN_FREQ_FIX` | `true` | `true`, `false` | Apply platform-specific frequency settings at startup. |
 | `PORT` | `8001` | TCP port | Set the HTTP server port inside the container. |
@@ -448,6 +451,9 @@ The machine-readable results are in [`benchmarks/rk3576.csv`](benchmarks/rk3576.
 
 ## Development
 
+For the full PC/server process—from checkpoint acquisition through conversion,
+publication, and image builds—see the [model conversion workflow](docs/MODEL_CONVERSION_WORKFLOW.md).
+
 ### Build the runtime image
 
 The Dockerfile only builds for ARM64. Build on an ARM64 host or use Docker Buildx:
@@ -476,6 +482,10 @@ sudo docker run --rm -it \
 ```
 
 Changes under `app/`, `docker/`, `runtime/`, `scripts/`, or `requirements.txt` require rebuilding the runtime image.
+
+The HTTP layer uses Python/FastAPI and calls the native RKLLM runtime through
+shared ctypes bindings. See [runtime provenance and ABI validation](runtime/README.md)
+for SDK update checks and the Python/C++ tradeoff.
 
 ### Add a Model Image
 

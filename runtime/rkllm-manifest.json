@@ -1,0 +1,12 @@
+{
+  "version": "1.3.1",
+  "platform": "linux/aarch64",
+  "upstream": "https://github.com/airockchip/rknn-llm",
+  "tag": "release-v1.3.1",
+  "commit": "f7390530443bf84f0394255a449d7cbe81e69d1c",
+  "sha256": {
+    "lib/librkllmrt.so": "f25e9b099db08aaacd0a3ac62b4697d3951d6ae61ae41ea09f6702cfa89eb32c",
+    "include/rkllm.h": "4ad19442de58df1b7d1ed0884ed75b8d4b5107cc4e75b7e44900b1f95a32c57c",
+    "LICENSE.rkllm": "8d670a646eb8cf28fb7c63a5c9126c224a3a3f8124b00a3b9184df9a2ed298b8"
+  }
+}
