@@ -71,8 +71,8 @@ examples should be absolute and contain no spaces.
 
 ```bash
 SERVER_HOST=Seeed-Dev
-SERVER_ROOT=/path/to/server/rkllm-work
-WORK_ROOT="$HOME/rkllm-work"
+SERVER_ROOT=/home/ae/hanzos_workspace/models
+WORK_ROOT=/home/hanzo/workspace/models
 JOB_ID="REPLACE_WITH_UNIQUE_JOB_ID"
 ```
 
@@ -105,9 +105,10 @@ each new SSH or tmux shell before downloading or converting.
 ## 3. Prepare the server and convert
 
 The server environment is `rkllm-3.11`. Before the first conversion, confirm
-its Python/toolkit versions and the server OS, architecture, GPU/VRAM, available
-disk space, and actual workspace paths; those hardware/path details remain
-unconfirmed. RKLLM 1.3.1 conversion wheels require x86 Linux and Python
+its Python/toolkit versions and the server OS, architecture, GPU/VRAM, and available
+disk space. The PC is `seeed-ubuntu` (`/home/hanzo/workspace/models`); the
+server checkout is `/home/ae/hanzos_workspace/rknn-llm`, with model/job data
+under `/home/ae/hanzos_workspace/models`. RKLLM 1.3.1 conversion wheels require x86 Linux and Python
 3.10–3.12. RWKV7 is an exception: it requires a separate Python 3.12 environment
 and its special requirements, so do not run that conversion in `rkllm-3.11`.
 
@@ -131,7 +132,7 @@ Example server commands, assuming the converter checkout is the current director
 ```bash
 conda activate rkllm-3.11
 
-SERVER_ROOT=/path/to/server/rkllm-work
+SERVER_ROOT=/home/ae/hanzos_workspace/models
 JOB_ID="REPLACE_WITH_THE_SAME_JOB_ID_USED_ON_PC"
 MODEL_ID=Qwen3-1.7B
 MODEL_DIR="$SERVER_ROOT/models/$MODEL_ID"
@@ -150,8 +151,11 @@ python tools/custom_export.py -m "$MODEL_DIR" -p RK3588 -q w8a8 \
 
 For VLM conversion, add `--kind vlm` and the correct vision options to each
 command. For a VLM language component only, add `--kind vlm --skip-vision`.
-Automatic VLM calibration is available only for the supported Qwen helpers;
-other families need a prepared manifest. Explicitly record the vision dimensions
+The single entry point automatically prepares missing quantized-language
+calibration for supported Qwen and Gemma4 families and reuses its cached manifest.
+Pass `--dataset` to use an existing manifest or `--prepare-dataset` to regenerate
+automatic VLM calibration. Encoder-only and unquantized conversions do not
+require language calibration. There is no separate Gemma4 calibration script. Explicitly record the vision dimensions
 instead of accepting unrelated defaults.
 
 Run long conversions in a persistent server session such as `tmux`, with a
@@ -182,7 +186,12 @@ or checksum mismatch must be retried before publication. Retain conversion logs
 and calibration provenance locally. Keep the private working bundle separate
 from the folder intended for public upload.
 
-## 5. Optional board test
+## 5. Board validation before this release
+
+For this Gemma4 release, both board targets are required: the PC can access
+`recomputer-rk3576-devkit.local` and `recomputer-rk3588-devkit.local` directly.
+Check SSH host identity before connecting; a changed key requires independent
+verification before replacing the saved entry.
 
 Copy only the selected platform's deployable files to a board with the matching
 SoC. Initially use the SDK demo/runtime matching the conversion, unless the
@@ -254,7 +263,9 @@ models/<llm-or-vlm>/<model-id>/<platform>/<quantization>.env
 Populate the fields documented in [models/README.md](../models/README.md):
 `MODEL_URL`, `MODEL_FILE`, `RKLLM_TOOLKIT_VERSION`, and `MODEL_SHA256`. Full VLMs
 also require `VISION_MODEL_URL`, `VISION_MODEL_FILE`, `VISION_MODEL_SHA256`, and
-the correct `VLM_IMAGE_SIZE`.
+the correct `VLM_IMAGE_SIZE`. For Gemma4 audio, also set `VLM_MODEL_FAMILY=gemma4`,
+`AUDIO_MODEL_URL`, `AUDIO_MODEL_FILE`, and `AUDIO_MODEL_SHA256`; the model build
+downloads, checksums, and packages this separate encoder.
 
 Use immutable HF `/resolve/<commit>/...` URLs from the verified upload. The
 artifact filename uses `w4a16_g128`; its definition/image tag uses `w4a16-g128`.
@@ -286,3 +297,74 @@ interpreted as proof that an image was built or a board test passed.
 Resume a failed job at its failed stage using the saved manifest. A changed
 checkpoint, calibration dataset, or conversion plan requires a new conversion
 result; a failed image build alone does not require reconverting the model.
+
+
+## Gemma4 1.3.1 procedure and current evidence
+
+Use the updated converter checkout; record its commit before starting. The
+validated audio export fixes are in converter commit `9ad8d7a`; runtime audio
+serving was tested from `c87e2af`. Pull with `git pull --ff-only` when the checkout
+is clean and its branch is correct. If GitHub is inaccessible from Seeed-Dev,
+transfer a Git bundle from the PC and fast-forward to the recorded commit.
+
+In a persistent server shell:
+
+```bash
+source /home/ae/miniforge3/etc/profile.d/conda.sh
+conda activate rkllm-3.11
+cd /home/ae/hanzos_workspace/rknn-llm
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+MODEL=/home/ae/hanzos_workspace/models/origin/google/gemma-4-E2B-it
+OUT=/home/ae/hanzos_workspace/models/jobs/NEW_JOB_ID/artifacts
+python tools/custom_export.py --kind vlm -m "$MODEL" -p RK3576 -q w4a16_g128 --height 480 --width 480 --audio --output-dir "$OUT"
+python tools/custom_export.py --kind vlm -m "$MODEL" -p RK3576 -q w8a8 --height 480 --width 480 --audio --output-dir "$OUT"
+python tools/custom_export.py --kind vlm -m "$MODEL" -p RK3588 -q w8a8 --height 480 --width 480 --audio --output-dir "$OUT"
+```
+
+Each invocation handles required calibration, language, vision, and audio stages.
+The two RK3576 quantizations share their platform's vision/audio encoder files.
+Use `--audio-only` to repair only audio. After changing export code, create a new
+output directory or use `--force` for the affected stage: an existing filename
+would otherwise be reused. Record the source's actual ModelScope revision from
+the download metadata; the local directory name alone does not establish it.
+
+The export compatibility layer rescales RMS normalization before squaring to
+avoid FP16 overflow, adapts fixed-shape masks/context extraction for ONNX, and
+replaces Gemma4 audio's 5D attention-head transpose with equivalent per-head 3D
+views and concatenation. The latter fixed RK3576 audio cosine from 0.59504 to
+0.99223. Runtime audio inputs use FP16 with RKNN tensor format `UNDEFINED` (3).
+These are conversion/native-input fixes; changing FastAPI routing alone cannot
+repair an incorrectly exported encoder.
+
+Validate preprocessing against the source processor, ONNX against the original
+float32 model, and each native encoder against float32 embeddings on its target
+board. Require finite tensors, correct shapes, and cosine at least 0.99; keep
+numerical checks separate from successful HTTP responses. Then test text,
+image questions, audio transcription, regular and SSE responses, 16 kHz mono,
+24 kHz stereo resampling, and invalid-audio HTTP 400. Record actual answers and
+latency. Run one model container at a time and stop temporary services afterward.
+Use baked application code for final image checks. Keep fixtures and reports
+in the job bundle rather than adding test files to the repositories.
+
+Evidence retained on the PC:
+`/home/hanzo/workspace/models/gemma-4-E2B-it-RKLLM/v1.3.1/vlm-test-20261018`.
+RK3576 W4A16_G128 and W8A8 pass the functional API checks; audio cosine is
+0.99222647 and ONNX/reference cosine is 0.99999999917. Two synthetic speech clips
+are functional checks, not a broad ASR benchmark. W4 adds one word on the first
+clip, also reproduced with reference embeddings. Vision cosine remains
+0.97914374, below the 0.99 gate. RK3588 hardware validation is pending; its vision
+compiler emitted REGTASK bit-width warnings. These results do not yet satisfy
+the requested all-success publication gate.
+
+After all required checks pass, curate a public upload folder on the PC with
+only the seven deployable files (three language, two vision, two audio), a model
+card, attribution, hashes, and a sanitized manifest. Preserve existing LLM-only
+HF paths and add the new multimodal set under a separate versioned directory.
+Use `/home/hanzo/.local/bin/hf` if the noninteractive PC shell does not put it on
+PATH. Verify authentication without displaying tokens, upload from the PC, read
+back the remote file inventory/hashes, and record the resulting HF commit.
+Register the three VLM definitions using that immutable commit; retain existing
+LLM definitions. Update Notion's published capability/toolkit fields only after
+the new files are verified public, with separate legacy LLM-only and new VLM
+versions and measured board results. Build images with an environment image
+containing the audio runtime and verify the packaged artifacts and serving API.

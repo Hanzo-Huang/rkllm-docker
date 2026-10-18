@@ -8,6 +8,7 @@ models/<llm-or-vlm>/<model-id>/<platform>/<quantization>.env
 
 LLM definitions download one `.rkllm` file. VLM definitions download a paired
 `.rkllm` language model and `.rknn` vision encoder for the same platform.
+Gemma4 can additionally bundle a separate audio `.rknn` encoder.
 
 An LLM definition contains:
 
@@ -33,7 +34,17 @@ VISION_MODEL_SHA256=lowercase-sha256
 VLM_IMAGE_SIZE=392
 ```
 
-`MODEL_FILE` and `VISION_MODEL_FILE` must exactly match the final filename in
+For optional Gemma4 audio, add all three audio artifact fields and select the
+model family. The build downloads and verifies the encoder before packaging it:
+
+```dotenv
+VLM_MODEL_FAMILY=gemma4
+AUDIO_MODEL_URL=https://example.com/gemma-4-E2B-it_audio_RK3576.rknn
+AUDIO_MODEL_FILE=gemma-4-E2B-it_audio_RK3576.rknn
+AUDIO_MODEL_SHA256=lowercase-sha256
+```
+
+`MODEL_FILE`, `VISION_MODEL_FILE`, and optional `AUDIO_MODEL_FILE` must exactly match the final filename in
 their corresponding URL. The converted artifacts in this repository put the
 platform before the quantization, for example:
 
@@ -63,13 +74,15 @@ sampling/max-token overrides are supplied through `RKLLMInferParam`. Do not
 copy the older v1.2.x `RKLLMParam` layout into the server; the field offsets
 are different. SDK 1.3.1 additionally appends an audio block to the multimodal
 input. This changes the input union size even for text-only requests; both
-servers use the shared definitions in `app/rkllm_types.py`. Audio structures
-are present for ABI compatibility; an audio HTTP endpoint is not implemented.
+servers use the shared definitions in `app/rkllm_types.py`. Gemma4 accepts OpenAI `input_audio` content through chat completions when the
+audio encoder is configured. It supports regular and SSE text responses from
+one PCM16 WAV clip (mono/stereo, 8–48 kHz, longer than 10 ms, up to 7.56 s).
+The vision and audio encoders are separate files; the language model is shared.
 
 **Toolkit version:** `RKLLM_TOOLKIT_VERSION` records the toolkit used to create
 the `.rkllm` file. It is intentionally kept as a separate, prominent field so
 the conversion version is easy to identify before building an image.
-`MODEL_URL` and `VISION_MODEL_URL` must be direct download URLs, such as
+`MODEL_URL`, `VISION_MODEL_URL`, and optional `AUDIO_MODEL_URL` must be direct download URLs, such as
 Hugging Face `/resolve/main/...` URLs. Model binaries are downloaded during
 the image build and are not committed to Git.
 
