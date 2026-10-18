@@ -38,7 +38,7 @@ RSS, CPU use, and streaming latency. Treat the upstream command-line demo as
 a native inference baseline; it does not include the same HTTP workload.
 Keep conversion tools in Python regardless of the serving implementation.
 
-## ABI validation
+## Native bindings
 
 Both servers import `app/rkllm_types.py`. SDK 1.3.1 adds the audio block to
 `RKLLMMultiModalInput`, increasing its LP64 size from 144 to 192 bytes and
@@ -47,25 +47,8 @@ and image requests too. Zero-initialized audio fields do not expose audio
 inference through the API; an audio encoder/backend and request handling are
 separate work.
 
-Run from the repository root with Python 3.11 and a C++ compiler:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-The tests compile a probe against the exact vendored header, compare all
-bound structure sizes/alignments/member offsets, verify that both servers
-use the shared types, and check the bundled binary architecture/checksums and
-image version labels. They require no ML packages or NPU. The Dockerfile additionally runs `scripts/check_runtime.py` inside the ARM64
-image: it imports both HTTP servers, loads RKLLM/RKNN, and calls the native
-`rkllm_createDefaultParam` through the bindings without loading a model. You can
-repeat this check with:
-
-```bash
-docker run --rm --entrypoint python rkllm-env:dev-1.3.1 /app/check_runtime.py
-```
-
-On-board model inference still requires a separate validation step.
+When updating the SDK, replace the library/header/license together, update the
+shared bindings and manifest, and adjust the Docker/CI versions.
 
 ## Gemma4 vision serving
 
@@ -80,19 +63,3 @@ roles. Audio and tool calling are not implemented by this profile.
 memory-constrained VLM boards. Vision models load directly from their file path
 to avoid holding duplicate model buffers in Python. The encoder receives packed
 RGB uint8 data; RKNN applies the normalization recorded during conversion.
-
-The endpoint smoke-test client saves actual text, image, and streaming responses:
-
-```bash
-python3 scripts/test_vlm_endpoint.py --base-url http://127.0.0.1:18001 \
-  --model gemma4-test --image /path/to/demo.jpg \
-  --question 'What is the astronaut holding, and what color is it?' \
-  --expect green --expect-any bottle can --report /path/to/test-report.json
-```
-
-This is a smoke test with explicit expected content, not a quality benchmark.
-
-Environment-image builds run these checks before packaging. Pull requests
-also run them through the runtime-test workflow. When updating the SDK,
-replace the library/header/license together, update the shared bindings and
-manifest, adjust Docker/CI versions, and run the checks before publishing.

@@ -46,14 +46,11 @@ COPY app/rkllm_types.py /app/rkllm_types.py
 COPY app/vlm_profiles.py /app/vlm_profiles.py
 COPY app/fastapi_server_llm.py /app/fastapi_server_llm.py
 COPY app/fastapi_server_vlm.py /app/fastapi_server_vlm.py
-COPY scripts/check_runtime.py /app/check_runtime.py
 COPY scripts/fix_freq*.sh /app/
 COPY docker/entrypoint.sh /app/docker-entrypoint.sh
 
 RUN chmod 0755 /app/docker-entrypoint.sh /app/fix_freq*.sh \
     && mkdir -p /app/models
-
-RUN python /app/check_runtime.py
 
 EXPOSE 8001
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

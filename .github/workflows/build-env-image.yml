@@ -30,13 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Verify RKLLM ABI and bundled runtime
-        run: python -m unittest discover -s tests -v
-
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3

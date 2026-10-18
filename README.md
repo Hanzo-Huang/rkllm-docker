@@ -484,7 +484,7 @@ sudo docker run --rm -it \
 Changes under `app/`, `docker/`, `runtime/`, `scripts/`, or `requirements.txt` require rebuilding the runtime image.
 
 The HTTP layer uses Python/FastAPI and calls the native RKLLM runtime through
-shared ctypes bindings. See [runtime provenance and ABI validation](runtime/README.md)
+shared ctypes bindings. See [runtime provenance and native bindings](runtime/README.md)
 for SDK update checks and the Python/C++ tradeoff.
 
 ### Add a Model Image
