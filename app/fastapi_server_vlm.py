@@ -4,7 +4,7 @@ OpenAI-compatible RKLLM Vision Language Model server.
 
 This server uses Rockchip's official runtime APIs directly:
 
-* librknnrt.so runs the vision encoder and produces image embeddings.
+* librknnrt.so runs the vision encoder and optional Gemma4 audio encoder.
 * librkllmrt.so runs the multimodal RKLLM model.
 
 The ctypes structures below match the RKLLM v1.3.1 runtime; no
@@ -240,10 +240,16 @@ class ImageUrl(BaseModel):
     detail: Optional[str] = "auto"
 
 
+class InputAudio(BaseModel):
+    data: str = Field(min_length=1, max_length=2_000_000)
+    format: str = "wav"
+
+
 class ContentPart(BaseModel):
     type: str
     text: Optional[str] = None
     image_url: Optional[ImageUrl] = None
+    input_audio: Optional[InputAudio] = None
 
 
 class Message(BaseModel):
@@ -574,6 +580,77 @@ class RKNNImageEncoder:
             self.ctx.value = 0
 
 
+class RKNNAudioEncoder(RKNNImageEncoder):
+    """Gemma4 audio tower with the SDK's fixed 756-frame log-mel input."""
+
+    def __init__(self, model_path: str, core_num: int):
+        self.lib = ctypes.CDLL("/usr/lib/librknnrt.so", mode=ctypes.RTLD_GLOBAL)
+        self.ctx = ctypes.c_uint64(0)
+        self.lock = threading.Lock()
+        self._setup_signatures()
+        self.model_data = ctypes.create_string_buffer(os.fsencode(model_path))
+        ret = self.lib.rknn_init(ctypes.byref(self.ctx), self.model_data, 0, 0, None)
+        if ret != 0:
+            raise RuntimeError(f"Audio rknn_init failed: {ret}")
+        try:
+            if hasattr(self.lib, "rknn_set_core_mask"):
+                status = self.lib.rknn_set_core_mask(self.ctx, {1: 1, 2: 3, 3: 7}[core_num])
+                if status != 0:
+                    raise RuntimeError(f"Audio core selection failed: {status}")
+            inputs = [self._query_attr(self.RKNN_QUERY_INPUT_ATTR, i)
+                      for i in range(self.io_num.n_input)]
+            self.output_attrs = [self._query_attr(self.RKNN_QUERY_OUTPUT_ATTR, i)
+                                 for i in range(self.io_num.n_output)]
+            shapes = [list(attr.dims[:attr.n_dims]) for attr in inputs]
+            if shapes != [[1, 756, 128], [1, 756]] or self.io_num.n_output != 1:
+                raise ValueError(f"Unsupported Gemma4 audio encoder layout: {shapes}")
+            self.audio_tokens, self.embed_size = self._find_embedding_shape(
+                list(self.output_attrs[0].dims[:self.output_attrs[0].n_dims]))
+            logger.info("RKNN audio encoder ready: 756 mel frames, %s tokens, embedding size %s",
+                        self.audio_tokens, self.embed_size)
+        except Exception:
+            self.close()
+            raise
+
+    def encode(self, audio_bytes: bytes) -> np.ndarray:
+        if __package__:
+            from .gemma4_audio import audio_features
+        else:
+            from gemma4_audio import audio_features
+
+        features, mask, tokens = audio_features(audio_bytes)
+        with self.lock:
+            arrays = [features.astype(np.float16), mask.astype(np.float16)]
+            inputs = (RknnInput * 2)()
+            for index, array in enumerate(arrays):
+                inputs[index].index = index
+                inputs[index].buf = array.ctypes.data_as(ctypes.c_void_p)
+                inputs[index].size = array.nbytes
+                inputs[index].type = 1  # RKNN_TENSOR_FLOAT16
+                inputs[index].fmt = 3  # RKNN_TENSOR_UNDEFINED, matching the SDK audio demo
+            ret = self.lib.rknn_inputs_set(self.ctx, 2, inputs)
+            if ret != 0:
+                raise RuntimeError(f"Audio inputs_set failed: {ret}")
+            ret = self.lib.rknn_run(self.ctx, None)
+            if ret != 0:
+                raise RuntimeError(f"Audio inference failed: {ret}")
+            outputs = (RknnOutput * 1)()
+            outputs[0].want_float = 1
+            ret = self.lib.rknn_outputs_get(self.ctx, 1, outputs, None)
+            if ret != 0:
+                raise RuntimeError(f"Audio outputs_get failed: {ret}")
+            try:
+                count = outputs[0].size // ctypes.sizeof(ctypes.c_float)
+                pointer = ctypes.cast(outputs[0].buf, ctypes.POINTER(ctypes.c_float))
+                result = np.ctypeslib.as_array(pointer, shape=(count,)).copy()
+                result = result.reshape(self.audio_tokens, self.embed_size)[:tokens]
+                if not np.isfinite(result).all():
+                    raise RuntimeError("Audio encoder produced non-finite embeddings")
+                return np.ascontiguousarray(result, dtype=np.float32)
+            finally:
+                self.lib.rknn_outputs_release(self.ctx, 1, outputs)
+
+
 # Shared ABI definitions must match the bundled runtime/include/rkllm.h.
 if __package__:
     from .rkllm_types import (
@@ -790,6 +867,7 @@ class RKLLMRuntime:
         presence_penalty: float = 0.0,
         repeat_penalty: float = 1.1,
         max_tokens: Optional[int] = None,
+        audio_embeddings: Optional[np.ndarray] = None,
     ) -> InferenceState:
         state = request_states[request_id]
         prompt_buffer = ctypes.create_string_buffer(prompt.encode("utf-8"))
@@ -798,26 +876,35 @@ class RKLLMRuntime:
         input_data.role = b"user"
         input_data.enable_thinking = enable_thinking
 
-        if image_embeddings is None:
+        if image_embeddings is None and audio_embeddings is None:
             input_data.input_type = self.RKLLM_INPUT_PROMPT
             input_data.input_data.prompt_input = ctypes.cast(prompt_buffer, ctypes.c_char_p)
         else:
-            image_embeddings = np.ascontiguousarray(image_embeddings, dtype=np.float32)
             multimodal = RKLLMMultiModalInput()
             multimodal.prompt = ctypes.cast(prompt_buffer, ctypes.c_char_p)
-            multimodal.image.image_embed = image_embeddings.ctypes.data_as(
-                ctypes.POINTER(ctypes.c_float)
-            )
-            multimodal.image.n_image_tokens = runtime.encoder.image_tokens
-            multimodal.image.n_image = 1
-            image_start = ctypes.create_string_buffer(config.img_start.encode("utf-8"))
-            image_end = ctypes.create_string_buffer(config.img_end.encode("utf-8"))
-            image_content = ctypes.create_string_buffer(config.img_content.encode("utf-8"))
-            multimodal.image.image_start = ctypes.cast(image_start, ctypes.c_char_p)
-            multimodal.image.image_end = ctypes.cast(image_end, ctypes.c_char_p)
-            multimodal.image.image_content = ctypes.cast(image_content, ctypes.c_char_p)
-            multimodal.image.image_width = image_width
-            multimodal.image.image_height = image_height
+            if image_embeddings is not None:
+                image_embeddings = np.ascontiguousarray(image_embeddings, dtype=np.float32)
+                multimodal.image.image_embed = image_embeddings.ctypes.data_as(
+                    ctypes.POINTER(ctypes.c_float)
+                )
+                multimodal.image.n_image_tokens = runtime.encoder.image_tokens
+                multimodal.image.n_image = 1
+                image_start = ctypes.create_string_buffer(config.img_start.encode("utf-8"))
+                image_end = ctypes.create_string_buffer(config.img_end.encode("utf-8"))
+                image_content = ctypes.create_string_buffer(config.img_content.encode("utf-8"))
+                multimodal.image.image_start = ctypes.cast(image_start, ctypes.c_char_p)
+                multimodal.image.image_end = ctypes.cast(image_end, ctypes.c_char_p)
+                multimodal.image.image_content = ctypes.cast(image_content, ctypes.c_char_p)
+                multimodal.image.image_width = image_width
+                multimodal.image.image_height = image_height
+            if audio_embeddings is not None:
+                audio_embeddings = np.ascontiguousarray(audio_embeddings, dtype=np.float32)
+                multimodal.audio.audio_embed = audio_embeddings.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+                multimodal.audio.n_audio_tokens = audio_embeddings.shape[0]
+                multimodal.audio.n_audio = 1
+                multimodal.audio.audio_start = b"<|audio>"
+                multimodal.audio.audio_end = b"<audio|>"
+                multimodal.audio.audio_content = b"<|audio|>"
             input_data.input_type = self.RKLLM_INPUT_MULTIMODAL
             input_data.input_data.multimodal_input = multimodal
 
@@ -870,6 +957,7 @@ class ServerConfig:
         self.model_name = os.environ.get("API_MODEL_NAME") or "rkllm-vision"
         self.model_family = "qwen"
         self.encoder_model_path = ""
+        self.audio_model_path = ""
         self.llm_model_path = ""
         self.platform = "rk3588"
         self.max_context_len = 2048
@@ -927,11 +1015,12 @@ def load_image(url: str) -> bytes:
     raise ValueError("image_url must be an HTTP(S) URL or a data URL")
 
 
-def message_parts(message: Message) -> Tuple[str, Optional[str]]:
+def message_parts(message: Message) -> Tuple[str, Optional[str], Optional[str]]:
     if isinstance(message.content, str):
-        return message.content, None
+        return message.content, None, None
     text_parts = []
     image_url = None
+    audio_data = None
     for part in message.content:
         if part.type == "text" and part.text:
             text_parts.append(part.text)
@@ -939,15 +1028,31 @@ def message_parts(message: Message) -> Tuple[str, Optional[str]]:
             if image_url is not None:
                 raise ValueError("Only one image is supported per request")
             image_url = part.image_url.url
-    return "".join(text_parts), image_url
+        elif part.type == "input_audio" and part.input_audio:
+            if audio_data is not None:
+                raise ValueError("Only one audio clip is supported per request")
+            if not config.audio_model_path:
+                raise ValueError("Audio input requires a configured audio encoder")
+            if part.input_audio.format != "wav":
+                raise ValueError("Audio input currently supports WAV only")
+            audio_data = part.input_audio.data
+        else:
+            raise ValueError(f"Unsupported or incomplete content part: {part.type}")
+    return "".join(text_parts), image_url, audio_data
 
 
-def build_prompt(messages: List[Message]) -> Tuple[str, Optional[str]]:
+def build_prompt(messages: List[Message]) -> Tuple[str, Optional[str], Optional[str]]:
     prompt_parts = []
     image_url = None
     gemma_turns = []
+    audio_data = None
     for message in messages:
-        text, message_image = message_parts(message)
+        text, message_image, message_audio = message_parts(message)
+        if message_audio is not None:
+            if audio_data is not None:
+                raise ValueError("Only one audio clip is supported per request")
+            audio_data = message_audio
+            text = "<audio>" + text
         if message_image:
             if image_url is not None:
                 raise ValueError("Only one image is supported per request")
@@ -963,11 +1068,11 @@ def build_prompt(messages: List[Message]) -> Tuple[str, Optional[str]]:
     if config.model_family == "gemma4" and gemma_turns:
         # Native auto-parsing is disabled for Gemma4. Render complete turns
         # here so system instructions and assistant history retain their roles.
-        return format_gemma4_chat(gemma_turns), image_url
+        return format_gemma4_chat(gemma_turns), image_url, audio_data
     prompt = "".join(prompt_parts)
     if not prompt.rstrip().endswith("Assistant:"):
         prompt += "Assistant:"
-    return prompt, image_url
+    return prompt, image_url, audio_data
 
 
 def estimate_tokens(text: str) -> int:
@@ -1002,6 +1107,7 @@ def execute_inference(
     presence_penalty: float = 0.0,
     repeat_penalty: float = 1.1,
     max_tokens: Optional[int] = None,
+    audio_data: Optional[str] = None,
 ) -> InferenceState:
     state = request_states[request_id]
     started = time.time()
@@ -1022,6 +1128,11 @@ def execute_inference(
                 image_height,
                 runtime.encoder.image_tokens,
             )
+        audio_embeddings = None
+        if audio_data is not None:
+            audio_bytes = base64.b64decode(audio_data, validate=True)
+            audio_embeddings = runtime.audio_encoder.encode(audio_bytes)
+            logger.info("[%s] audio encoded: %s tokens", request_id, audio_embeddings.shape[0])
         result = runtime.llm.run(
             request_id,
             prompt,
@@ -1036,6 +1147,7 @@ def execute_inference(
             presence_penalty=presence_penalty,
             repeat_penalty=repeat_penalty,
             max_tokens=max_tokens,
+            audio_embeddings=audio_embeddings,
         )
         if result.error:
             logger.error("[%s] request failed: %s", request_id, result.error)
@@ -1081,7 +1193,7 @@ def openai_chunk(
 
 
 async def stream_completion(request: ChatCompletionRequest, request_id: str, created: int,
-                           prompt: str, image_url: Optional[str]):
+                           prompt: str, image_url: Optional[str], audio_data: Optional[str]):
     try:
         enable_thinking = thinking_enabled(request)
         logger.info(
@@ -1109,6 +1221,7 @@ async def stream_completion(request: ChatCompletionRequest, request_id: str, cre
                 request.max_completion_tokens or request.max_tokens,
                 enable_thinking,
             ),
+            audio_data,
         )
         yield openai_chunk(request_id, created, request.model, role="assistant")
         last_activity = time.time()
@@ -1180,6 +1293,8 @@ async def lifespan(app: FastAPI):
             )
             encoder_core_num = core_limit
         runtime.encoder = RKNNImageEncoder(config.encoder_model_path, encoder_core_num)
+        runtime.audio_encoder = (RKNNAudioEncoder(config.audio_model_path, encoder_core_num)
+                                 if config.audio_model_path else None)
         runtime.llm = RKLLMRuntime(config.llm_model_path, config.platform, config)
         logger.info(
             "API ready: model=%s platform=%s vision_cores=%s",
@@ -1201,6 +1316,9 @@ async def lifespan(app: FastAPI):
         if runtime:
             llm = getattr(runtime, "llm", None)
             encoder = getattr(runtime, "encoder", None)
+            audio_encoder = getattr(runtime, "audio_encoder", None)
+            if audio_encoder:
+                audio_encoder.close()
             if llm:
                 llm.close()
             if encoder:
@@ -1234,7 +1352,7 @@ async def root():
         "endpoints": {
             "GET /health": "Health check",
             "GET /v1/models": "List models",
-            "POST /v1/chat/completions": "OpenAI-compatible text and image chat",
+            "POST /v1/chat/completions": "OpenAI-compatible text, image, and optional audio chat",
         },
     }
 
@@ -1266,10 +1384,11 @@ async def list_models():
             # can use them when capability discovery is supported.
             "capabilities": (
                 ["vision"]
+                + (["audio"] if config.audio_model_path else [])
                 + (["reasoning"] if reasoning_supported else [])
                 + (["thinking"] if thinking_supported else [])
             ),
-            "input_modalities": ["text", "image"],
+            "input_modalities": ["text", "image"] + (["audio"] if config.audio_model_path else []),
             "output_modalities": ["text"],
             "reasoning": {
                 "supported": reasoning_supported,
@@ -1288,7 +1407,16 @@ async def create_chat_completion(request: ChatCompletionRequest):
     if runtime is None:
         raise HTTPException(status_code=503, detail="VLM runtime is not initialized")
     try:
-        prompt, image_url = build_prompt(request.messages)
+        prompt, image_url, audio_data = build_prompt(request.messages)
+        if audio_data is not None:
+            if __package__:
+                from .gemma4_audio import decode_wav
+            else:
+                from gemma4_audio import decode_wav
+            try:
+                decode_wav(base64.b64decode(audio_data, validate=True))
+            except (ValueError, base64.binascii.Error) as error:
+                raise ValueError(f"Invalid audio input: {error}") from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -1307,7 +1435,7 @@ async def create_chat_completion(request: ChatCompletionRequest):
 
     if request.stream:
         return StreamingResponse(
-            stream_completion(request, request_id, created, prompt, image_url),
+            stream_completion(request, request_id, created, prompt, image_url, audio_data),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
@@ -1331,6 +1459,7 @@ async def create_chat_completion(request: ChatCompletionRequest):
                 request.max_completion_tokens or request.max_tokens,
                 thinking_enabled(request),
             ),
+            audio_data,
         )
         if state.error:
             raise HTTPException(status_code=500, detail=state.error)
@@ -1372,6 +1501,7 @@ async def create_chat_completion(request: ChatCompletionRequest):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Official-runtime RKLLM Vision OpenAI API server")
+    parser.add_argument("--audio_model", default=None, help="Optional Gemma4 audio encoder .rknn path")
     parser.add_argument("--encoder_model", required=True, help="Vision encoder .rknn path")
     parser.add_argument("--llm_model", required=True, help="Multimodal language model .rkllm path")
     parser.add_argument("--model_name", default=os.environ.get("API_MODEL_NAME") or "rkllm-vision")
@@ -1411,6 +1541,9 @@ if __name__ == "__main__":
         if not os.path.exists(path):
             logger.error("%s not found: %s", label.capitalize(), path)
             sys.exit(1)
+    if args.audio_model and not os.path.isfile(args.audio_model):
+        parser.error(f"Audio encoder not found: {args.audio_model}")
+    config.audio_model_path = os.path.abspath(args.audio_model) if args.audio_model else ""
     config.encoder_model_path = os.path.abspath(args.encoder_model)
     config.llm_model_path = os.path.abspath(args.llm_model)
     config.model_name = args.model_name
@@ -1431,6 +1564,8 @@ if __name__ == "__main__":
         else platform_npu_core_limit(args.target_platform)
     )
     profile = resolve_profile(config.llm_model_path, args.model_family)
+    if config.audio_model_path and profile.family != "gemma4":
+        parser.error("Audio input currently requires the Gemma4 model family")
     config.model_family = profile.family
     config.img_start = profile.image_start if args.img_start is None else args.img_start
     config.img_end = profile.image_end if args.img_end is None else args.img_end

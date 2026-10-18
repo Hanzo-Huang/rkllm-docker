@@ -22,7 +22,7 @@ def resolve_profile(model_path: str, family: str = 'auto') -> VLMProfile:
 
 
 def format_gemma4_chat(turns) -> str:
-    """Canonical text/image chat with thinking disabled and explicit history."""
+    """Canonical multimodal chat with thinking disabled and explicit history."""
     prompt = '<bos>'
     for role, text in turns:
         role = 'model' if role == 'assistant' else role

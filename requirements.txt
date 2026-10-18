@@ -7,3 +7,6 @@ pydantic>=2.0.0
 requests
 Pillow>=10.0.0
 typing-extensions
+
+# Audio sample-rate conversion
+scipy>=1.10

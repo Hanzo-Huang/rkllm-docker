@@ -18,6 +18,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MODEL_KIND=llm \
     VISION_MODEL_PATH= \
     VISION_MODEL_FILE= \
+    AUDIO_MODEL_PATH= \
+    AUDIO_MODEL_FILE= \
     API_MODEL_NAME= \
     LOG_LEVEL=info \
     INTERACTIVE_CHAT=false \
@@ -43,6 +45,7 @@ RUN ldconfig \
 WORKDIR /app
 COPY runtime/LICENSE.rkllm runtime/rkllm-manifest.json /usr/share/doc/rkllm/
 COPY app/rkllm_types.py /app/rkllm_types.py
+COPY app/gemma4_audio.py /app/gemma4_audio.py
 COPY app/vlm_profiles.py /app/vlm_profiles.py
 COPY app/fastapi_server_llm.py /app/fastapi_server_llm.py
 COPY app/fastapi_server_vlm.py /app/fastapi_server_vlm.py

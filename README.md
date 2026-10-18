@@ -535,3 +535,27 @@ See [`models/README.md`](models/README.md) for build scopes, image tags, and pri
 This is a personal experiment, so there is no formal support or release schedule. Reproducible issues and tested pull requests are still welcome.
 
 Include the board, SoC, operating system, kernel, NPU driver, image tag, model variant, test command, and relevant logs with compatibility reports. Keep model binaries, credentials, and download tokens out of Git.
+
+### Gemma4 audio input
+
+Gemma4 can share its language `.rkllm` between image and audio requests, with
+separate vision and audio `.rknn` encoders. Set `MODEL_KIND=vlm`,
+`VLM_MODEL_FAMILY=gemma4`, and `AUDIO_MODEL_FILE` to the audio encoder filename
+in the mounted model directory, alongside `MODEL_FILE` and `VISION_MODEL_FILE`.
+Alternatively pass `AUDIO_MODEL_PATH` or `--audio_model` directly. Audio is
+optional; `/v1/models` advertises it only when configured.
+
+Send `POST /v1/chat/completions` with message content such as:
+
+```json
+[
+  {"type": "input_audio", "input_audio": {"data": "<base64 WAV bytes>", "format": "wav"}},
+  {"type": "text", "text": "Transcribe this audio exactly."}
+]
+```
+
+The fixed Gemma4 audio export accepts one PCM16 WAV clip per request, up to
+7.56 seconds, mono or stereo at 8–48 kHz. The API resamples to 16 kHz and uses
+the SDK's log-mel features and valid-token mask. Split longer recordings before
+sending them. Both regular and streaming responses produce text; speech output
+requires a separate TTS service. MP3 input is not currently supported.

@@ -24,10 +24,10 @@ Record the source checkpoint separately from the component being exported:
 
 SDK support, an available encoder exporter, successful conversion, and runtime
 support are separate facts. For example, SDK 1.3.1 provides Gemma4 vision/audio
-exporters, but this Docker application currently has no audio API/backend.
-Do not publish an audio-capable Docker image merely because audio conversion
-succeeded. LFM2.5-VL language support does not supply a bundled LFM vision
-exporter.
+exporters. This Docker application accepts Gemma4 audio when a matching audio
+encoder is configured with `AUDIO_MODEL_FILE` or `AUDIO_MODEL_PATH`. Validate
+audio preprocessing and real speech responses on the board before publishing.
+LFM2.5-VL language support does not supply a bundled LFM vision exporter.
 
 Create a job record before downloading. A YAML file or a Notion record plus a
 local manifest is sufficient initially. Record:

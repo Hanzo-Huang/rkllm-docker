@@ -57,7 +57,10 @@ Use `MODEL_KIND=vlm` and a matching language model and vision encoder. Set
 the family. The server uses Gemma4 image markers and renders explicit canonical
 chat turns because the native parser cannot read some checkpoints' separate
 `chat_template.jinja` files. System messages and assistant history retain their
-roles. Audio and tool calling are not implemented by this profile.
+roles. Gemma4 audio input additionally requires `AUDIO_MODEL_FILE` or
+`AUDIO_MODEL_PATH` pointing to a matching audio encoder. Audio uses its own
+markers, WAV preprocessing, and encoder; it shares the language `.rkllm`.
+Tool calling is not implemented by this profile.
 
 `RKLLM_EMBED_FLASH=1` selects the native storage-backed word embeddings for
 memory-constrained VLM boards. Vision models load directly from their file path

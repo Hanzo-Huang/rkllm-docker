@@ -1,7 +1,7 @@
 """ctypes bindings for the bundled Rockchip RKLLM 1.3.1 C API.
 
 Both HTTP servers use these definitions. Verify them against the vendored
-runtime/include/rkllm.h with tests/test_rkllm_abi.py before changing SDK versions.
+runtime/include/rkllm.h before changing SDK versions.
 The audio input layout is required even for text/image requests because it
 changes the size of RKLLMInput. This module does not implement an audio API.
 """
