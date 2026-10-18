@@ -368,3 +368,37 @@ LLM definitions. Update Notion's published capability/toolkit fields only after
 the new files are verified public, with separate legacy LLM-only and new VLM
 versions and measured board results. Build images with an environment image
 containing the audio runtime and verify the packaged artifacts and serving API.
+
+
+## Spark-X2.5-1.7B job
+
+Spark-X2.5 is newly listed in RKLLM 1.3.1. The selected checkpoint is the
+instruction model `XHToken/Spark-X2.5-1.7B`, a text-only LLM. The ModelScope
+`master` download exposes no immutable commit through the installed API;
+`source-checksums.json` records the 20 downloaded checkpoint files instead.
+
+The checkpoint's custom model code uses Transformers 4.x tied-weight metadata;
+automatic calibration fails under 5.8 with a list/dictionary mismatch. For this
+job, activate `rkllm-3.11`, then an isolated venv using its system packages with
+Transformers 4.57.1 and huggingface-hub 0.36.2. The base Conda environment retains
+5.8 for Gemma4. RKLLM 1.3.1 declares Transformers 5.8 as a dependency, so this
+exception is recorded in the job manifest and checked through real exports and
+board inference. Do not silently change the shared environment for other jobs.
+
+The same `tools/custom_export.py --kind llm` command handles calibration and
+conversion: pass the local checkpoint, `--max-context 4096`, the target and dtype,
+and one fresh job output directory. Automatic calibration produced 21 samples.
+All three requested exports succeeded. RK3576 W4A16_G128 and W8A8 passed
+arithmetic, factual response, SSE, and conversation-context checks using the
+baked RKLLM 1.3.1 environment image. These are functional smoke checks, not a
+broad model-quality benchmark. Temporary model services were stopped afterward.
+RK3588 hardware testing remains pending verification of its changed SSH host
+identity. HF and container publication remain gated on both boards passing.
+
+The PC bundle is
+`/home/hanzo/workspace/models/Spark-X2.5-1.7B-RKLLM/v1.3.1/job-20261019`.
+Its server counterpart is
+`/home/ae/hanzos_workspace/models/jobs/spark-x2.5-1.7b-1.3.1-20261019`.
+Keep artifact checksums, source inventory, calibration, conversion logs, and
+per-variant board responses with this bundle. Resume at RK3588 deployment after
+SSH identity verification; successful completed exports need not be repeated.
