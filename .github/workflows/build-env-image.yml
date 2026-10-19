@@ -37,7 +37,18 @@ jobs:
       - name: Compute image name
         id: image
         shell: bash
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: |
+          name="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          {
+            echo 'tags<<EOF'
+            echo "$name:env-$GITHUB_SHA"
+            if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+              echo "$name:env-latest"
+              echo "$name:$RKLLM_RUNTIME_VERSION"
+            fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -56,9 +67,6 @@ jobs:
           build-args: |
             VERSION=${{ github.sha }}
             RKLLM_RUNTIME_VERSION=${{ env.RKLLM_RUNTIME_VERSION }}
-          tags: |
-            ${{ steps.image.outputs.name }}:env-latest
-            ${{ steps.image.outputs.name }}:${{ env.RKLLM_RUNTIME_VERSION }}
-            ${{ steps.image.outputs.name }}:env-${{ github.sha }}
+          tags: ${{ steps.image.outputs.tags }}
           cache-from: type=gha,scope=rkllm-env
           cache-to: type=gha,mode=max,scope=rkllm-env
