@@ -352,9 +352,13 @@ RK3576 W4A16_G128 and W8A8 pass the functional API checks; audio cosine is
 0.99222647 and ONNX/reference cosine is 0.99999999917. Two synthetic speech clips
 are functional checks, not a broad ASR benchmark. W4 adds one word on the first
 clip, also reproduced with reference embeddings. Vision cosine remains
-0.97914374, below the 0.99 gate. RK3588 hardware validation is pending; its vision
-compiler emitted REGTASK bit-width warnings. These results do not yet satisfy
-the requested all-success publication gate.
+0.97914374, below the 0.99 gate. RK3588 was then checked after SSH identity verification: vision cosine
+0.99876202 and the green-can image question pass, but audio cosine0.34071939
+and speech transcription fail. Single-core execution, float32 inputs, and the
+earlier attention layout yield the same audio result. A text arithmetic check
+returns5 for2+2; text SSE passes. Its vision compiler emitted REGTASK bit-width
+warnings. These results do not satisfy the all-success publication gate.
+Gemma4 remains unpublished; its reports are separate from the passing Spark job.
 
 After all required checks pass, curate a public upload folder on the PC with
 only the seven deployable files (three language, two vision, two audio), a model
@@ -392,13 +396,36 @@ All three requested exports succeeded. RK3576 W4A16_G128 and W8A8 passed
 arithmetic, factual response, SSE, and conversation-context checks using the
 baked RKLLM 1.3.1 environment image. These are functional smoke checks, not a
 broad model-quality benchmark. Temporary model services were stopped afterward.
-RK3588 hardware testing remains pending verification of its changed SSH host
-identity. HF and container publication remain gated on both boards passing.
+RK3588 W8A8 subsequently passed the same four checks after the user verified its
+new ED25519 host fingerprint. All 12 functional checks across the three variants
+passed. Checksum verification succeeded after retrieval through the PC.
 
 The PC bundle is
 `/home/hanzo/workspace/models/Spark-X2.5-1.7B-RKLLM/v1.3.1/job-20261019`.
 Its server counterpart is
 `/home/ae/hanzos_workspace/models/jobs/spark-x2.5-1.7b-1.3.1-20261019`.
 Keep artifact checksums, source inventory, calibration, conversion logs, and
-per-variant board responses with this bundle. Resume at RK3588 deployment after
-SSH identity verification; successful completed exports need not be repeated.
+per-variant board responses with this bundle. The host key was retrieved by the board IP resolved through `getent` because
+`ssh-keyscan` could not resolve the `.local` name directly; its fingerprint was
+compared with the user-verified value before replacing the saved hostname entry.
+All temporary test containers were stopped after testing.
+
+After verification, the PC curates only the three deployable artifacts, README,
+license, hashes, source inventory, and a sanitized manifest for HF upload. The
+Docker definitions must pin the resulting HF commit. Branch environment builds
+publish `env-<commit>`; only main builds update `env-latest` and runtime version
+tags. Use the immutable environment tag as `base_tag` for the model image build.
+
+
+For this PC, the first Xet upload stalled around 2 GB with repeated timeouts.
+The retry used the [HF client's documented Xet-disable setting](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables):
+
+```bash
+HF_HUB_DISABLE_XET=1 /home/hanzo/.local/bin/hf upload \
+  HanzoHuang/Spark-X2.5-1.7B-RKLLM /path/to/curated-upload .
+```
+
+Keep the upload folder unchanged during a transfer. After upload, verify all
+remote LFS hashes/sizes and read back the model card and manifest before pinning
+the HF commit in Docker definitions. A published repository shell or a partial
+upload is not a completed model release.

@@ -155,6 +155,7 @@ ghcr.io/hanzo-huang/rkllm-docker/<llm-or-vlm>/<model>:<platform>-<quantization>
 | Qwen2.5 3B Instruct | ✅ | — | ✅ | ✅ |
 | Qwen3 1.7B | ✅ | ✅ | ✅ | ✅ |
 | Qwen3 4B | ✅ | ✅ | ✅ | ✅ |
+| Spark-X2.5 1.7B | — | ✅ | ✅ | ✅ |
 
 For future W4A16 conversions, use **W4A16-g128** (`w4a16-g128` in image tags
 and definition names) instead of W4A16 (`w4a16`). The older `w4a16` variant
@@ -178,6 +179,7 @@ Toolkit versions are recorded in every model definition and model card:
 - **RKLLM Toolkit v1.3.0:** DeepSeek R1 Distill Qwen 1.5B, MiniCPM3 4B,
   MiniCPM4 0.5B, Qwen2 0.5B, Qwen3 1.7B, Llama 3.2 1B/3B,
   Gemma 4 E2B IT, and Qwen3.5 2B/4B.
+- **RKLLM Toolkit v1.3.1:** Spark-X2.5 1.7B (text-only, context 4096; all three variants passed target-board functional checks).
 
 Example VLM image:
 
