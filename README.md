@@ -34,7 +34,7 @@ This is a personal testing project, not a production inference platform.
 
 ## Bundled Versions
 
-- RKLLM runtime: `v1.3.0`
+- RKLLM runtime: `v1.3.1`
 - RKNN Toolkit Lite 2 wheel: `v2.3.2`
 
 The RKLLM Toolkit version used to convert a model is stored in that model's
@@ -155,6 +155,7 @@ ghcr.io/hanzo-huang/rkllm-docker/<llm-or-vlm>/<model>:<platform>-<quantization>
 | Qwen2.5 3B Instruct | ✅ | — | ✅ | ✅ |
 | Qwen3 1.7B | ✅ | ✅ | ✅ | ✅ |
 | Qwen3 4B | ✅ | ✅ | ✅ | ✅ |
+| Spark-X2.5 1.7B | — | ✅ | ✅ | ✅ |
 
 For future W4A16 conversions, use **W4A16-g128** (`w4a16-g128` in image tags
 and definition names) instead of W4A16 (`w4a16`). The older `w4a16` variant
@@ -178,6 +179,12 @@ Toolkit versions are recorded in every model definition and model card:
 - **RKLLM Toolkit v1.3.0:** DeepSeek R1 Distill Qwen 1.5B, MiniCPM3 4B,
   MiniCPM4 0.5B, Qwen2 0.5B, Qwen3 1.7B, Llama 3.2 1B/3B,
   Gemma 4 E2B IT, and Qwen3.5 2B/4B.
+- **RKLLM Toolkit v1.3.1:** Spark-X2.5 1.7B (text-only, context 4096).
+
+The FastAPI servers use the bundled runtime's 1.3.1 C API layout for all model
+files. A model's conversion-toolkit version stays recorded separately; loading
+an older export does not select an older C API layout. Keep the original
+conversion-toolkit version in each model definition.
 
 Example VLM image:
 
@@ -186,7 +193,7 @@ ghcr.io/hanzo-huang/rkllm-docker/vlm/qwen3.5-2b:rk3576-w4a16-g128
 ```
 
 Model image tags use `<platform>-<quantization>`; runtime environment tags use
-the RKLLM runtime version, currently `1.3.0`.
+the RKLLM runtime version, currently `1.3.1`.
 
 Model licenses and usage restrictions are determined by their original authors. Review them before deployment or redistribution.
 

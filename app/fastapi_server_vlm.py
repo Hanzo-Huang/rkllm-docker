@@ -7,7 +7,7 @@ This server uses Rockchip's official runtime APIs directly:
 * librknnrt.so runs the vision encoder and produces image embeddings.
 * librkllmrt.so runs the multimodal RKLLM model.
 
-The ctypes structures below match the RKLLM v1.3.0 runtime; no
+The ctypes structures below match the RKLLM v1.3.1 runtime; no
 project-specific runtime wrapper is required.
 """
 
@@ -387,13 +387,13 @@ class RKNNImageEncoder:
         self.lock = threading.Lock()
         self._setup_signatures()
 
-        with open(model_path, "rb") as model_file:
-            model_data = model_file.read()
-        self.model_data = ctypes.create_string_buffer(model_data)
+        # Size zero tells RKNN to load the file directly, avoiding a retained
+        # Python copy of the encoder weights.
+        self.model_data = ctypes.create_string_buffer(os.fsencode(model_path))
         ret = self.lib.rknn_init(
             ctypes.byref(self.ctx),
             ctypes.cast(self.model_data, ctypes.c_void_p),
-            len(model_data),
+            0,
             0,
             None,
         )
@@ -512,16 +512,14 @@ class RKNNImageEncoder:
             image = square.resize((self.width, self.height), Image.Resampling.BILINEAR)
             pixels = np.asarray(image, dtype=np.uint8).copy()
 
-            if self.input_attr.fmt == self.RKNN_TENSOR_NCHW:
-                pixels = np.transpose(pixels, (2, 0, 1)).copy()
-
             input_info = RknnInput()
             input_info.index = 0
             input_info.buf = pixels.ctypes.data_as(ctypes.c_void_p)
             input_info.size = pixels.nbytes
             input_info.pass_through = 0
             input_info.type = self.RKNN_TENSOR_UINT8
-            input_info.fmt = self.input_attr.fmt
+            # Packed RGB input; RKNN converts NHWC to the encoder's layout.
+            input_info.fmt = self.RKNN_TENSOR_NHWC
 
             ret = self.lib.rknn_inputs_set(self.ctx, 1, ctypes.byref(input_info))
             if ret != 0:
@@ -573,9 +571,9 @@ class RKNNImageEncoder:
             self.ctx.value = 0
 
 
-# ==================== Official RKLLM v1.3.0 C API structures ====================
+# ==================== Official RKLLM v1.3.1 C API structures ====================
 #
-# Keep these definitions in sync with rkllm.h. v1.3.0 changed the ABI from
+# Match Rockchip's upstream C API layout. v1.3.0 changed the ABI from
 # v1.2.3: RKLLMParam gained ignore_eos_token and no longer contains the image
 # marker strings; those strings now belong to the multimodal image input.
 class RKLLMExtendParam(ctypes.Structure):
@@ -653,11 +651,24 @@ class RKLLMVideoInput(ctypes.Structure):
     ]
 
 
+class RKLLMAudioInput(ctypes.Structure):
+    # Required by the 1.3.1 input ABI, including for text/image-only models.
+    _fields_ = [
+        ("audio_embed", ctypes.POINTER(ctypes.c_float)),
+        ("n_audio_tokens", ctypes.c_size_t),
+        ("n_audio", ctypes.c_size_t),
+        ("audio_start", ctypes.c_char_p),
+        ("audio_end", ctypes.c_char_p),
+        ("audio_content", ctypes.c_char_p),
+    ]
+
+
 class RKLLMMultiModalInput(ctypes.Structure):
     _fields_ = [
         ("prompt", ctypes.c_char_p),
         ("image", RKLLMImageInput),
         ("video", RKLLMVideoInput),
+        ("audio", RKLLMAudioInput),
     ]
 
 
@@ -769,7 +780,7 @@ runtime = None
 
 
 class RKLLMRuntime:
-    """Direct wrapper around the official RKLLM v1.3.0 runtime."""
+    """Direct wrapper around the official RKLLM v1.3.1 runtime."""
 
     RKLLM_INPUT_PROMPT = 0
     RKLLM_INPUT_MULTIMODAL = 3
@@ -847,6 +858,10 @@ class RKLLMRuntime:
         self.lib.rkllm_run.restype = ctypes.c_int
         self.lib.rkllm_destroy.argtypes = [ctypes.c_void_p]
         self.lib.rkllm_destroy.restype = ctypes.c_int
+        self.lib.rkllm_clear_kv_cache.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p
+        ]
+        self.lib.rkllm_clear_kv_cache.restype = ctypes.c_int
 
     def _callback_impl(self, result_ptr, userdata, state_code):
         if not userdata:
@@ -938,6 +953,11 @@ class RKLLMRuntime:
         infer_params.max_new_tokens = max_tokens or 0
 
         with self.lock:
+            # Requests include their complete conversation; native history must
+            # not leak between callers or text/image transitions.
+            ret = self.lib.rkllm_clear_kv_cache(self.handle, 0, None, None)
+            if ret != 0:
+                raise RuntimeError(f"rkllm_clear_kv_cache failed with code {ret}")
             ret = self.lib.rkllm_run(
                 self.handle,
                 ctypes.byref(input_data),
