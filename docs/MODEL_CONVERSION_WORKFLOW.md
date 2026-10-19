@@ -204,6 +204,103 @@ Minimum smoke test:
 - Exercise the intended API if the model will be served through Docker.
 - Record runtime/driver versions, SoC, RAM use, speed, and errors.
 
+### Benchmark the selected model
+
+Run [the benchmark script](../scripts/benchmark_model.py) for the current job's
+requested variants, after functional smoke tests. Do not start a database-wide
+batch. Use the exact tested artifact on the matching board; the script verifies
+its SHA-256 before loading it. Keep legacy Gemma language-only artifacts separate
+from unpublished multimodal candidates.
+
+The script runs directly on Linux with the matching runtime, or inside an
+explicit, already-loaded RKLLM environment image via `--docker-image`. Copy this
+checkout's `scripts/`, `app/`, and `runtime/rkllm-manifest.json` to the board first.
+It verifies the installed RKLLM library against that manifest and records the
+image ID, model/runtime hashes, settings, prompt, clocks, and temperatures. Use
+an idle board; the Docker launcher refuses to run alongside other containers.
+The script observes clocks without changing them. Prepare and record the same
+frequency settings when comparing variants.
+
+Example from the PC, for **one** Spark RK3576 W8A8 variant (replace checkout,
+model, image, and report paths for the current job):
+
+```bash
+BOARD=recomputer-rk3576-devkit.local
+BENCHMARK_DATE=$(TZ=Asia/Shanghai date +%F)
+
+ssh "$BOARD" "python3 /home/hanzo/workspace/rkllm-docker/scripts/benchmark_model.py \
+  --docker-image ghcr.io/hanzo-huang/rkllm-docker:env-a1335e3bd00a1ddc9fcf765f5ec2d8d6ea79525d \
+  --model /home/hanzo/workspace/models/spark-x2.5-1.7b-131-test/models/Spark-X2.5-1.7B_RK3576_w8a8.rkllm \
+  --model-sha256 fe47ea39dd7968f0cfd4673e9ed189dbec768600dd35f068ca3f33c38a9b8267 \
+  --platform rk3576 --quantization w8a8 --date '$BENCHMARK_DATE' \
+  --output /home/hanzo/workspace/models/benchmarks/spark-rk3576-w8a8-'$BENCHMARK_DATE'"
+```
+
+The date comes from the PC because board clocks may be incorrect. Reports are
+written outside the checkout; existing completed reports are never overwritten.
+Repeat explicitly for RK3576 `w4a16_g128` and/or RK3588 `w8a8` when requested.
+For VLMs, add `--vision PATH --vision-sha256 SHA256`; for audio also add
+`--audio PATH --audio-sha256 SHA256`. Use the job's `--embed-flash 0|1` setting.
+Encoders are loaded for memory accounting; this benchmark measures text
+generation and does not replace image/audio functional tests.
+
+Defaults use one model at a time per board, RKLLM runtime 1.3.1, context 2048, thinking
+disabled, and greedy decoding. After a 32-token warm-up, run three generations
+with a 128-token limit and EOS ignored for consistent lengths. Report the median
+of `generate_tokens * 1000 / generate_time_ms` from RKLLM's native callback,
+excluding prefill. The native decode count can be 127 because the first token
+belongs to prefill; do not substitute the HTTP API's estimated token count.
+
+Time to first token (`ttft_ms`) is measured with a monotonic clock from immediately
+before `rkllm_run` to the first native token callback, including a token waiting
+for UTF-8 completion. `first_text_ms` separately records the first text callback.
+Loading and the KV reset happen before this timer starts. Each run records both;
+`median_ttft_ms` excludes warm-up. This is native runtime latency, not HTTP/SSE
+end-to-end latency. **Keep first-token measurements in the report only; do not
+add TTFT properties to Notion.**
+
+Sample `/proc/meminfo` every 50 ms. RAM is the additional
+`MemTotal - MemAvailable` above a five-second idle baseline, expressed in decimal
+GB. Record the sampled maximum during loading and the median over ten seconds
+after setup, before warm-up. Retain absolute board use, process RSS/VmHWM, and
+swap readings alongside the delta: page cache and background activity can affect
+the board-level measurement, and swapping can invalidate speed comparisons.
+Record `embed_flash`, runtime/image identity, artifact hashes, clocks, and the
+prompt with the raw results. The script flags negative memory deltas and swap
+growth above 10 MB as unsuitable for automatic Notion updates. Inspect such
+reports before repeating on an idle board; preserve failures without substituting
+zero values or overwriting an earlier valid measurement.
+
+### Update Notion after benchmarking
+
+1. Copy the report directory back to the PC and inspect `result.json`,
+   `memory-samples.json`, and `runtime.log` (Docker mode). Require `success: true`
+   and `notion_ready: true`, complete repeated timings, and matching artifact
+   hashes. Keep functional acceptance separate from benchmark completion.
+2. Fetch the current model's Notion page and database schema through MCP. Read
+   `notion-properties.json`, which contains only the measured variant's three
+   numeric fields and `Benchmark_Checked`. Update that existing model page using
+   `update_properties`; leave other variants and conversion statuses unchanged.
+3. Use `<platform>_<quantization>_tok_s`, `_startup_GB`, and `_stable_GB`, for example
+   `rk3576_w8a8_tok_s`. These are the existing properties for the three requested
+   variants. Preserve the layout order: tok/s → startup RAM → stable RAM within
+   each board/quantization group. Do not create combined text summaries, duplicate
+   properties, or a TTFT field.
+4. Update the model page's hardware benchmark table and record the method,
+   context, runtime version, image ID, `embed_flash`, and PC evidence path there.
+   Update an existing benchmark section rather than appending duplicates. Read
+   back the three numeric values and measurement date to verify the write.
+
+Unconverted or unmeasured variants have no numeric result. Failed or interrupted
+runs produce reports, not a Notion update payload. The script never contacts
+Notion or uploads artifacts; the agent performs the MCP update after review.
+
+The earlier 2026-10-19 Spark/MiniCPM4 reports remain at
+`seeed-ubuntu:/home/hanzo/workspace/models/rkllm-benchmark-20261019`.
+They used temporary performance governors and did not measure TTFT. Do not
+backfill first-token timings from prefill durations. New runs use the versioned
+script above; private diagnostics and validation fixtures stay outside the repo.
+
 Record `passed`, `failed`, or `skipped` per platform/configuration. Missing board
 access is `skipped`, not `passed`. A failed test stops release of that variant
 until investigated; an intentionally skipped test may be published with its

@@ -435,6 +435,12 @@ W4A16 was faster and used less memory than W8A8 in every recorded test. Results 
 
 The machine-readable results are in [`benchmarks/rk3576.csv`](benchmarks/rk3576.csv).
 
+For new measurements, use [`scripts/benchmark_model.py`](scripts/benchmark_model.py)
+and the [benchmark workflow](docs/MODEL_CONVERSION_WORKFLOW.md#benchmark-the-selected-model).
+It records native generation speed, time to first token, and startup/stable RAM
+for one selected variant. After reviewing the report, update the model's existing
+Notion speed/RAM fields; first-token timing stays in the report.
+
 </details>
 
 ## Repository Structure
