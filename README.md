@@ -227,10 +227,13 @@ sudo docker run --rm -it \
   -e MODEL_FILE=my-model.rkllm \
   -e TARGET_PLATFORM=rk3576 \
   -e API_MODEL_NAME=my-llm \
-  ghcr.io/hanzo-huang/rkllm-docker:env-latest
+  ghcr.io/hanzo-huang/rkllm-docker:env-latest \
+  serve --max_context_len 4096
 ```
 
 Replace the host path, file name, and platform with values for your device.
+The examples use a 4096-token context; the model must be exported for at
+least that length.
 The container exits with a clear error if the selected model file does not
 exist.
 
@@ -251,7 +254,8 @@ sudo docker run --rm -it \
   -e VISION_MODEL_FILE=my-vlm-vision-model.rknn \
   -e TARGET_PLATFORM=rk3576 \
   -e API_MODEL_NAME=my-vlm \
-  ghcr.io/hanzo-huang/rkllm-docker:env-latest
+  ghcr.io/hanzo-huang/rkllm-docker:env-latest \
+  serve --max_context_len 4096
 ```
 
 The `.rkllm` and `.rknn` files must be a matching conversion for the same
