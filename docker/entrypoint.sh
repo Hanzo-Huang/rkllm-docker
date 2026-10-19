@@ -26,7 +26,13 @@ if [ -n "${VISION_MODEL_FILE:-}" ]; then
         *) VISION_MODEL_PATH="/app/models/$VISION_MODEL_FILE" ;;
     esac
 fi
-export MODEL_PATH VISION_MODEL_PATH
+if [ -n "${AUDIO_MODEL_FILE:-}" ]; then
+    case "$AUDIO_MODEL_FILE" in
+        /*) AUDIO_MODEL_PATH="$AUDIO_MODEL_FILE" ;;
+        *) AUDIO_MODEL_PATH="/app/models/$AUDIO_MODEL_FILE" ;;
+    esac
+fi
+export MODEL_PATH VISION_MODEL_PATH AUDIO_MODEL_PATH
 
 if [ ! -f "${MODEL_PATH}" ]; then
     echo "RKLLM model not found: ${MODEL_PATH}" >&2
@@ -52,6 +58,20 @@ vlm)
         *) vlm_core_num=3 ;;
     esac
 
+    if [ -n "${AUDIO_MODEL_PATH:-}" ]; then
+        if [ ! -f "$AUDIO_MODEL_PATH" ]; then
+            echo "Audio encoder not found: $AUDIO_MODEL_PATH" >&2
+            exit 1
+        fi
+        set -- --audio_model "$AUDIO_MODEL_PATH" "$@"
+    fi
+
+    # Omitted markers use the model profile; explicit empty overrides remain
+    # valid for model families whose marker strings are empty.
+    if [ "${VLM_IMAGE_START+x}" = x ]; then set -- --img_start "$VLM_IMAGE_START" "$@"; fi
+    if [ "${VLM_IMAGE_END+x}" = x ]; then set -- --img_end "$VLM_IMAGE_END" "$@"; fi
+    if [ "${VLM_IMAGE_CONTENT+x}" = x ]; then set -- --img_content "$VLM_IMAGE_CONTENT" "$@"; fi
+
     exec python3 /app/fastapi_server_vlm.py \
         --encoder_model "${VISION_MODEL_PATH}" \
         --llm_model "${MODEL_PATH}" \
@@ -59,9 +79,7 @@ vlm)
         --target_platform "${TARGET_PLATFORM}" \
         --port "${PORT:-8001}" \
         --rknn_core_num "$vlm_core_num" \
-        --img_start "${VLM_IMAGE_START:-<|vision_start|>}" \
-        --img_end "${VLM_IMAGE_END:-<|vision_end|>}" \
-        --img_content "${VLM_IMAGE_CONTENT:-<|image_pad|>}" \
+        --model_family "${VLM_MODEL_FAMILY:-auto}" \
         "$@"
     ;;
 *)

@@ -157,6 +157,7 @@ jobs:
           set -a; source "$definition"; set +a
           MODEL_KIND="${MODEL_KIND:-$INPUT_MODEL_KIND}"
           [[ "$MODEL_KIND" == "$INPUT_MODEL_KIND" ]]
+          [[ "${RKLLM_EMBED_FLASH:-0}" =~ ^[01]$ ]]
           MODEL_URL="${INPUT_MODEL_URL:-${MODEL_URL:-}}"
           VISION_MODEL_URL="${INPUT_VISION_MODEL_URL:-${VISION_MODEL_URL:-}}"
           test -n "$MODEL_URL"; test -n "${MODEL_FILE:-}"; test -n "${RKLLM_TOOLKIT_VERSION:-}"
@@ -165,13 +166,20 @@ jobs:
             test -n "$VISION_MODEL_URL"; test -n "${VISION_MODEL_FILE:-}"
             [[ "$VISION_MODEL_FILE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.rknn$ ]]
           fi
+          if [[ -n "${AUDIO_MODEL_URL:-}${AUDIO_MODEL_FILE:-}${AUDIO_MODEL_SHA256:-}" ]]; then
+            [[ "$MODEL_KIND" == "vlm" ]]
+            test -n "${AUDIO_MODEL_URL:-}"; test -n "${AUDIO_MODEL_FILE:-}"
+            [[ "$AUDIO_MODEL_FILE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.rknn$ ]]
+            [[ "${AUDIO_MODEL_SHA256:-}" =~ ^[a-fA-F0-9]{64}$ ]]
+            [[ "$AUDIO_MODEL_FILE" != "$VISION_MODEL_FILE" ]]
+          fi
           base_image="ghcr.io/${GITHUB_REPOSITORY,,}"
           image="$base_image/$INPUT_MODEL_KIND/$INPUT_MODEL_ID"
           default_tag="$INPUT_PLATFORM-$INPUT_QUANTIZATION"
           tag="${INPUT_IMAGE_TAG:-$default_tag}"
           [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
           {
-            echo "model_kind=$MODEL_KIND"; echo "url=$MODEL_URL"; echo "file=$MODEL_FILE"; echo "platform=$INPUT_PLATFORM"; echo "toolkit_version=$RKLLM_TOOLKIT_VERSION"; echo "sha256=${MODEL_SHA256:-}"; echo "vision_url=$VISION_MODEL_URL"; echo "vision_file=${VISION_MODEL_FILE:-}"; echo "vision_sha256=${VISION_MODEL_SHA256:-}"; echo "image_size=${VLM_IMAGE_SIZE:-392}"; echo "base_image=$base_image"; echo "image=$image"; echo "tag=$tag"
+            echo "model_kind=$MODEL_KIND"; echo "url=$MODEL_URL"; echo "file=$MODEL_FILE"; echo "platform=$INPUT_PLATFORM"; echo "toolkit_version=$RKLLM_TOOLKIT_VERSION"; echo "sha256=${MODEL_SHA256:-}"; echo "vision_url=$VISION_MODEL_URL"; echo "vision_file=${VISION_MODEL_FILE:-}"; echo "vision_sha256=${VISION_MODEL_SHA256:-}"; echo "audio_url=${AUDIO_MODEL_URL:-}"; echo "audio_file=${AUDIO_MODEL_FILE:-}"; echo "audio_sha256=${AUDIO_MODEL_SHA256:-}"; echo "model_family=${VLM_MODEL_FAMILY:-auto}"; echo "image_size=${VLM_IMAGE_SIZE:-392}"; echo "embed_flash=${RKLLM_EMBED_FLASH:-0}"; echo "base_image=$base_image"; echo "image=$image"; echo "tag=$tag"
           } >> "$GITHUB_OUTPUT"
 
       - name: Download model artifacts
@@ -183,6 +191,9 @@ jobs:
           VISION_MODEL_URL: ${{ steps.model.outputs.vision_url }}
           VISION_MODEL_FILE: ${{ steps.model.outputs.vision_file }}
           VISION_MODEL_SHA256: ${{ steps.model.outputs.vision_sha256 }}
+          AUDIO_MODEL_URL: ${{ steps.model.outputs.audio_url }}
+          AUDIO_MODEL_FILE: ${{ steps.model.outputs.audio_file }}
+          AUDIO_MODEL_SHA256: ${{ steps.model.outputs.audio_sha256 }}
           MODEL_DOWNLOAD_TOKEN: ${{ secrets.MODEL_DOWNLOAD_TOKEN }}
         run: |
           set -euo pipefail
@@ -196,6 +207,7 @@ jobs:
           }
           download "$MODEL_URL" "$MODEL_FILE" "$MODEL_SHA256"
           if [[ -n "$VISION_MODEL_FILE" ]]; then download "$VISION_MODEL_URL" "$VISION_MODEL_FILE" "$VISION_MODEL_SHA256"; fi
+          if [[ -n "$AUDIO_MODEL_FILE" ]]; then download "$AUDIO_MODEL_URL" "$AUDIO_MODEL_FILE" "$AUDIO_MODEL_SHA256"; fi
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -218,9 +230,12 @@ jobs:
             MODEL_ID=${{ matrix.model_id }}:${{ matrix.platform }}-${{ matrix.quantization }}
             MODEL_FILE=${{ steps.model.outputs.file }}
             VISION_MODEL_FILE=${{ steps.model.outputs.vision_file }}
+            AUDIO_MODEL_FILE=${{ steps.model.outputs.audio_file }}
+            VLM_MODEL_FAMILY=${{ steps.model.outputs.model_family }}
             TARGET_PLATFORM=${{ matrix.platform }}
             RKLLM_TOOLKIT_VERSION=${{ steps.model.outputs.toolkit_version }}
             VLM_IMAGE_SIZE=${{ steps.model.outputs.image_size }}
+            RKLLM_EMBED_FLASH=${{ steps.model.outputs.embed_flash }}
           tags: |
             ${{ steps.model.outputs.image }}:${{ steps.model.outputs.tag }}
             ${{ steps.model.outputs.image }}:${{ steps.model.outputs.tag }}-${{ github.sha }}
