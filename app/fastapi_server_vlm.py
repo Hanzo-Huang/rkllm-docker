@@ -828,6 +828,11 @@ class RKLLMRuntime:
         self.lib.rkllm_run.restype = ctypes.c_int
         self.lib.rkllm_destroy.argtypes = [ctypes.c_void_p]
         self.lib.rkllm_destroy.restype = ctypes.c_int
+        self.lib.rkllm_clear_kv_cache.argtypes = [
+            ctypes.c_void_p, ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+        ]
+        self.lib.rkllm_clear_kv_cache.restype = ctypes.c_int
 
     def _callback_impl(self, result_ptr, userdata, state_code):
         if not userdata:
@@ -929,6 +934,13 @@ class RKLLMRuntime:
         infer_params.max_new_tokens = max_tokens or 0
 
         with self.lock:
+            # Every API request contains its complete conversation. Explicitly
+            # clear native state before switching between text/image/audio.
+            ret = self.lib.rkllm_clear_kv_cache(self.handle, 0, None, None)
+            if ret != 0:
+                state.error = f"rkllm_clear_kv_cache failed with code {ret}"
+                state.completed.set()
+                return state
             ret = self.lib.rkllm_run(
                 self.handle,
                 ctypes.byref(input_data),
@@ -1293,7 +1305,10 @@ async def lifespan(app: FastAPI):
             )
             encoder_core_num = core_limit
         runtime.encoder = RKNNImageEncoder(config.encoder_model_path, encoder_core_num)
-        runtime.audio_encoder = (RKNNAudioEncoder(config.audio_model_path, encoder_core_num)
+        # RK3588 multi-core audio execution corrupts the encoder output with
+        # Toolkit2 2.3.2 (cosine 0.71 vs 0.992 on core 0). Keep audio on
+        # one core independently of the vision encoder core selection.
+        runtime.audio_encoder = (RKNNAudioEncoder(config.audio_model_path, 1)
                                  if config.audio_model_path else None)
         runtime.llm = RKLLMRuntime(config.llm_model_path, config.platform, config)
         logger.info(

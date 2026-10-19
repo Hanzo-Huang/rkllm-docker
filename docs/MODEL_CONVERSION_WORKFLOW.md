@@ -334,7 +334,12 @@ The export compatibility layer rescales RMS normalization before squaring to
 avoid FP16 overflow, adapts fixed-shape masks/context extraction for ONNX, and
 replaces Gemma4 audio's 5D attention-head transpose with equivalent per-head 3D
 views and concatenation. The latter fixed RK3576 audio cosine from 0.59504 to
-0.99223. Runtime audio inputs use FP16 with RKNN tensor format `UNDEFINED` (3).
+0.99223. The audio export also bounds gradient clipping to finite FP16 values;
+the source limit of ±1e10 produces zero activations on RK3588. Runtime audio
+inputs use FP16 with RKNN tensor format `UNDEFINED` (3). Select one audio core
+independently of the vision core count: after the clipping fix, RK3588 audio
+cosine is 0.99216 on one core versus 0.71126 on three. Clear native KV state
+between complete API conversations to make image/audio transitions reliable.
 These are conversion/native-input fixes; changing FastAPI routing alone cannot
 repair an incorrectly exported encoder.
 
@@ -350,17 +355,26 @@ in the job bundle rather than adding test files to the repositories.
 
 Evidence retained on the PC:
 `/home/hanzo/workspace/models/gemma-4-E2B-it-RKLLM/v1.3.1/vlm-test-20261018`.
-RK3576 W4A16_G128 and W8A8 pass the functional API checks; audio cosine is
-0.99222647 and ONNX/reference cosine is 0.99999999917. Two synthetic speech clips
-are functional checks, not a broad ASR benchmark. W4 adds one word on the first
-clip, also reproduced with reference embeddings. Vision cosine remains
-0.97914374, below the 0.99 gate. RK3588 was then checked after SSH identity verification: vision cosine
-0.99876202 and the green-can image question pass, but audio cosine0.34071939
-and speech transcription fail. Single-core execution, float32 inputs, and the
-earlier attention layout yield the same audio result. A text arithmetic check
-returns5 for2+2; text SSE passes. Its vision compiler emitted REGTASK bit-width
-warnings. These results do not satisfy the all-success publication gate.
-Gemma4 remains unpublished; its reports are separate from the passing Spark job.
+Latest checks on 2026-10-19 use copies of the current application files on both
+boards, with their hashes recorded. Audio cosine passes on both targets:
+RK3576 0.99222647 and RK3588 0.99216218. The corrected audio ONNX matches the
+original float32 reference at cosine 0.99999999917. Two synthetic clips exercise
+regular/SSE transcription, 16 kHz mono and 24 kHz stereo; they are functional
+checks rather than an ASR benchmark. RK3576 W4A16_G128 passes all 14 API checks.
+
+The original W8A8 calibration had only image inputs. The integrated exporter now
+captures 20 image samples plus the SDK's 21 general text prompts. Both fresh
+W8A8 exports pass arithmetic; exact conversation recall currently inserts a
+space (`ORCHI D` for `ORCHID`), so the strict API suite still fails. Changing the
+repetition penalty does not resolve it. Further quantization correction is under
+validation; do not publish those experimental language files as validated.
+
+RK3576 vision remains at cosine 0.97914620, below the 0.99 reference gate;
+RK3588 vision is 0.99876202. Matching fixture/artifact hashes, single-core
+execution, normalized input submission, and disabling compiler optimizations
+do not remove the RK3576 mismatch. The remaining vision and W8A8 checks keep
+Gemma4's multimodal release unpublished. Existing public LLM-only paths remain
+unchanged. All diagnostic outputs stay in the private job bundle.
 
 After all required checks pass, curate a public upload folder on the PC with
 only the seven deployable files (three language, two vision, two audio), a model
@@ -428,7 +442,8 @@ compared with the user-verified value before replacing the saved hostname entry.
 All temporary test containers were stopped after testing.
 
 After verification, the PC curates only the three deployable artifacts, README,
-license, hashes, source inventory, and a sanitized manifest for HF upload. The
+license, and deployable-file hashes for HF upload. Source inventories and
+conversion manifests remain private. The
 Docker definitions must pin the resulting HF commit. Branch environment builds
 publish `env-<commit>`; only main builds update `env-latest` and runtime version
 tags. Use the immutable environment tag as `base_tag` for the model image build.
@@ -443,13 +458,14 @@ HF_HUB_DISABLE_XET=1 /home/hanzo/.local/bin/hf upload \
 ```
 
 Keep the upload folder unchanged during a transfer. After upload, verify all
-remote LFS hashes/sizes and read back the model card and manifest before pinning
+remote LFS hashes/sizes and read back the model card before pinning
 the HF commit in Docker definitions. A published repository shell or a partial
 upload is not a completed model release.
 
 Spark release references:
 
 - HF artifacts: `HanzoHuang/Spark-X2.5-1.7B-RKLLM`, pinned artifact commit `ce762cbd90333607857da517fd7988fc626feb1c`.
+- Human-readable card refreshed at `c307d0422f00bf79e47ce17b7270131938800da0`; public source inventory and conversion manifest removed. All 15 applicable RKLLM cards now follow the shared template; RKLLM3/RKNN3 were excluded and all model artifacts were verified unchanged.
 - Environment build: https://github.com/Hanzo-Huang/rkllm-docker/actions/runs/39185013301; tag `env-a1335e3bd00a1ddc9fcf765f5ec2d8d6ea79525d`.
 - Model builds: https://github.com/Hanzo-Huang/rkllm-docker/actions/runs/39187189317; source commit `d0321a83a21e190cee437d2af538f88617615b45`.
 - Registry prefix: `ghcr.io/hanzo-huang/rkllm-docker/llm/spark-x2.5-1.7b`.
