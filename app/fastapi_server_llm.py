@@ -270,7 +270,7 @@ class RKLLMExtendParam(ctypes.Structure):
     ]
 
 class RKLLMParam(ctypes.Structure):
-    """RKLLMParam from the airockchip/rknn-llm v1.3.0 header.
+    """RKLLMParam from the airockchip/rknn-llm v1.3.1 header.
 
     v1.3.0 removed the image marker strings from this structure.  Leaving
     those v1.2.x fields in place shifts ``extend_param`` and makes the runtime
@@ -333,11 +333,24 @@ class RKLLMVideoInput(ctypes.Structure):
         ("frame_height", ctypes.c_size_t),
     ]
 
+class RKLLMAudioInput(ctypes.Structure):
+    # Required by the 1.3.1 input ABI, including for text/image-only models.
+    _fields_ = [
+        ("audio_embed", ctypes.POINTER(ctypes.c_float)),
+        ("n_audio_tokens", ctypes.c_size_t),
+        ("n_audio", ctypes.c_size_t),
+        ("audio_start", ctypes.c_char_p),
+        ("audio_end", ctypes.c_char_p),
+        ("audio_content", ctypes.c_char_p),
+    ]
+
+
 class RKLLMMultiModalInput(ctypes.Structure):
     _fields_ = [
         ("prompt", ctypes.c_char_p),
         ("image", RKLLMImageInput),
         ("video", RKLLMVideoInput),
+        ("audio", RKLLMAudioInput),
     ]
 
 class RKLLMInputUnion(ctypes.Union):
@@ -717,6 +730,10 @@ class RKLLMModel:
                     ctypes.POINTER(RKLLMCallback),
                 ]
                 rkllm_init.restype = ctypes.c_int
+                rkllm_lib.rkllm_clear_kv_cache.argtypes = [
+                    ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p
+                ]
+                rkllm_lib.rkllm_clear_kv_cache.restype = ctypes.c_int
 
                 # Call initialization
                 ret = rkllm_init(
@@ -756,6 +773,11 @@ class RKLLMModel:
 
             try:
                 # Prepare input
+                # Each API call supplies the full conversation, so reset native
+                # history under the same lock as generation.
+                ret = rkllm_lib.rkllm_clear_kv_cache(self.handle, 0, None, None)
+                if ret != 0:
+                    raise RuntimeError(f"RKLLM cache reset failed with error code: {ret}")
                 rkllm_input = RKLLMInput()
                 rkllm_input.role = ctypes.c_char_p(b"user")
                 rkllm_input.enable_thinking = bool(enable_thinking)
