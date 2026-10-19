@@ -212,12 +212,14 @@ untested status stated in the model card.
 ## 6. Publish from the PC
 
 Prepare an upload directory containing only the intended public artifacts,
-README, license/attribution files, and a sanitized conversion manifest. Exclude
+README, license/attribution files, and deployable-file checksums. Keep source
+inventories and conversion manifests in the private job bundle. Exclude
 caches, tokens, private calibration samples, and large intermediate ONNX files
 unless deliberately publishing them. When publishing ONNX, include all external
 tensor files it references.
 
-The agent prepares the README using the manifest and actual test results:
+The agent prepares the README using the private job records and actual test
+results, following [the shared model-card template](HF_MODEL_CARD_TEMPLATE.md):
 
 - Exact base checkpoint and source provider/revision.
 - LLM, full VLM, or language-only capability; available vision/audio encoders.
@@ -362,7 +364,8 @@ Gemma4 remains unpublished; its reports are separate from the passing Spark job.
 
 After all required checks pass, curate a public upload folder on the PC with
 only the seven deployable files (three language, two vision, two audio), a model
-card, attribution, hashes, and a sanitized manifest. Preserve existing LLM-only
+card, attribution, and deployable-file hashes. Keep the conversion manifest
+private. Preserve existing LLM-only
 HF paths and add the new multimodal set under a separate versioned directory.
 Use `/home/hanzo/.local/bin/hf` if the noninteractive PC shell does not put it on
 PATH. Verify authentication without displaying tokens, upload from the PC, read
@@ -379,7 +382,9 @@ containing the audio runtime and verify the packaged artifacts and serving API.
 Spark-X2.5 is newly listed in RKLLM 1.3.1. The selected checkpoint is the
 instruction model `XHToken/Spark-X2.5-1.7B`, a text-only LLM. The ModelScope
 `master` download exposes no immutable commit through the installed API;
-`source-checksums.json` records the 20 downloaded checkpoint files instead.
+the private job bundle records hashes of the 20 downloaded checkpoint files
+instead. Source inventories and conversion manifests are not public release
+files; the model card contains the useful conversion and validation facts.
 
 The checkpoint's custom model code uses Transformers 4.x tied-weight metadata;
 automatic calibration fails under 5.8 with a list/dictionary mismatch. For this
