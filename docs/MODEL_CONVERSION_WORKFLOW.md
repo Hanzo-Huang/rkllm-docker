@@ -389,6 +389,18 @@ Transformers 4.57.1 and huggingface-hub 0.36.2. The base Conda environment retai
 exception is recorded in the job manifest and checked through real exports and
 board inference. Do not silently change the shared environment for other jobs.
 
+For the Spark job only, prepare the isolated environment after activating Conda:
+
+```bash
+conda activate rkllm-3.11
+python -m venv --system-site-packages /path/to/job/venv
+source /path/to/job/venv/bin/activate
+python -m pip install transformers==4.57.1 huggingface-hub==0.36.2
+```
+
+Run the single conversion entry point from this environment. Use `deactivate`
+before returning to a model that needs the base environment's Transformers 5.8.
+
 The same `tools/custom_export.py --kind llm` command handles calibration and
 conversion: pass the local checkpoint, `--max-context 4096`, the target and dtype,
 and one fresh job output directory. Automatic calibration produced 21 samples.
@@ -429,3 +441,20 @@ Keep the upload folder unchanged during a transfer. After upload, verify all
 remote LFS hashes/sizes and read back the model card and manifest before pinning
 the HF commit in Docker definitions. A published repository shell or a partial
 upload is not a completed model release.
+
+Spark release references:
+
+- HF artifacts: `HanzoHuang/Spark-X2.5-1.7B-RKLLM`, pinned artifact commit `ce762cbd90333607857da517fd7988fc626feb1c`.
+- Environment build: https://github.com/Hanzo-Huang/rkllm-docker/actions/runs/39185013301; tag `env-a1335e3bd00a1ddc9fcf765f5ec2d8d6ea79525d`.
+- Model builds: https://github.com/Hanzo-Huang/rkllm-docker/actions/runs/39187189317; source commit `d0321a83a21e190cee437d2af538f88617615b45`.
+- Registry prefix: `ghcr.io/hanzo-huang/rkllm-docker/llm/spark-x2.5-1.7b`.
+- Immutable tags: `rk3576-w4a16-g128-d0321a83a21e190cee437d2af538f88617615b45`, `rk3576-w8a8-d0321a83a21e190cee437d2af538f88617615b45`, `rk3588-w8a8-d0321a83a21e190cee437d2af538f88617615b45`.
+
+For final image verification, pull ARM64 images on the PC, record their registry
+digests and image content IDs, then use `docker save`/`docker load` to transfer
+them to the target boards. A saved archive may omit the registry digest, so
+compare the board image's content ID with the PC's verified registry image.
+Check the packaged model SHA-256, then start the image without a host model
+mount and repeat the same API acceptance cases. All three published Spark
+images passed this final check; temporary services were stopped. Keep image
+inspection data, registry digests, hashes, and final responses in the job bundle.
