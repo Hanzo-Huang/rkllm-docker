@@ -173,13 +173,23 @@ model and RKNN vision encoder:
 | Qwen3.5 2B | ✅ | ✅ | ✅ |
 | Qwen3.5 4B | ✅ | ✅ | ✅ |
 
+Local definitions are also prepared for **Qwen3-VL-2B-Instruct** and
+**Qwen3-VL-4B-Instruct**, each with RK3576 W4A16-g128/W8A8 and RK3588 W8A8.
+All six variants passed text, image, streaming, numerical vision checks, and
+on-board speed/memory measurements. Their model images still need to be built
+and published after the definitions are pushed and the corresponding Hugging
+Face artifacts are available.
+
 Toolkit versions are recorded in every model definition and model card:
 
 - **RKLLM Toolkit v1.2.3:** Gemma 3 4B IT, Qwen2.5 1.5B, Qwen2.5 3B, and Qwen3 4B.
 - **RKLLM Toolkit v1.3.0:** DeepSeek R1 Distill Qwen 1.5B, MiniCPM3 4B,
   MiniCPM4 0.5B, Qwen2 0.5B, Qwen3 1.7B, Llama 3.2 1B/3B,
   Gemma 4 E2B IT, and Qwen3.5 2B/4B.
-- **RKLLM Toolkit v1.3.1:** Spark-X2.5 1.7B (text-only, context 4096).
+- **RKLLM Toolkit v1.3.1:** Spark-X2.5 1.7B (text-only, context 4096), and
+  Qwen3-VL-2B-Instruct/4B-Instruct (VLM, export context 8192, tested serving
+  context 4096, image size 448). The 2B vision encoders use RKNN Toolkit2
+  2.5.0; the 4B encoders use 2.3.2. Both were validated with RKNN runtime 2.3.2.
 
 The FastAPI servers use the bundled runtime's 1.3.1 C API layout for all model
 files. A model's conversion-toolkit version stays recorded separately; loading
