@@ -38,10 +38,14 @@ echo userspace > /sys/class/devfreq/fb000000.gpu/governor
 echo 1000000000 > /sys/class/devfreq/fb000000.gpu/userspace/set_freq
 cat /sys/class/devfreq/fb000000.gpu/cur_freq
 
-echo "DDR available frequencies:"
-cat /sys/class/devfreq/dmc/available_frequencies
-echo "Fix DDR max frequency:"
-echo userspace > /sys/class/devfreq/dmc/governor
-echo 2112000000 > /sys/class/devfreq/dmc/userspace/set_freq
-cat /sys/class/devfreq/dmc/cur_freq
+if [ -d /sys/class/devfreq/dmc ]; then
+    echo "DDR available frequencies:"
+    cat /sys/class/devfreq/dmc/available_frequencies
+    echo "Fix DDR max frequency:"
+    echo userspace > /sys/class/devfreq/dmc/governor
+    echo 2112000000 > /sys/class/devfreq/dmc/userspace/set_freq
+    cat /sys/class/devfreq/dmc/cur_freq
+else
+    echo "DDR frequency control unavailable; keeping kernel settings."
+fi
 
