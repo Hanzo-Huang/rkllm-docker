@@ -187,6 +187,14 @@ on-board speed/memory measurements. Their model images still need to be built
 and published after the definitions are pushed and the corresponding Hugging
 Face artifacts are available.
 
+Local definitions for **Qwen2.5-VL-3B-Instruct** cover the same three variants.
+All 21 API checks and both numerical vision checks passed on the target boards.
+The [Hugging Face release](https://huggingface.co/HanzoHuang/Qwen2.5-VL-3B-Instruct-RKLLM)
+is verified; exports use context 8192 and 448×448 images, with functional tests
+at context 4096 and benchmarks at 2048. Language conversion uses RKLLM 1.3.1;
+vision conversion, runtime validation, and benchmarks use RKNN 2.5.0. Model-image
+builds remain pending the owner's future Git push.
+
 Toolkit versions are recorded in every model definition and model card:
 
 - **RKLLM Toolkit v1.2.3:** Gemma 3 4B IT, Qwen2.5 1.5B, Qwen2.5 3B, and Qwen3 4B.
