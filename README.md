@@ -35,7 +35,14 @@ This is a personal testing project, not a production inference platform.
 ## Bundled Versions
 
 - RKLLM runtime: `v1.3.1`
-- RKNN Toolkit Lite 2 wheel: `v2.3.2`
+- RKNN Runtime and Toolkit Lite 2 wheel: `v2.5.0`
+
+RKNN 2.5.0 was checked on RK3576 and RK3588 with Qwen3-VL vision encoders
+exported by Toolkit2 2.3.2 and 2.5.0. Numerical encoder checks, Lite2 inference,
+and 28 text/image API checks passed. The published Gemma4 RK3588 vision and
+single-core audio encoders exported by 2.3.2 also produced identical outputs
+under runtimes 2.3.2 and 2.5.0. Existing speed/memory measurements retain their
+original runtime version; they have not been repeated for this upgrade.
 
 The RKLLM Toolkit version used to convert a model is stored in that model's
 env definition and published as `io.rkllm.toolkit.version` on its image. This
@@ -189,7 +196,8 @@ Toolkit versions are recorded in every model definition and model card:
 - **RKLLM Toolkit v1.3.1:** Spark-X2.5 1.7B (text-only, context 4096), and
   Qwen3-VL-2B-Instruct/4B-Instruct (VLM, export context 8192, tested serving
   context 4096, image size 448). The 2B vision encoders use RKNN Toolkit2
-  2.5.0; the 4B encoders use 2.3.2. Both were validated with RKNN runtime 2.3.2.
+  2.5.0; the 4B encoders use 2.3.2. Both were validated with RKNN runtimes
+  2.3.2 and 2.5.0. Their published benchmark numbers were measured with 2.3.2.
 
 The FastAPI servers use the bundled runtime's 1.3.1 C API layout for all model
 files. A model's conversion-toolkit version stays recorded separately; loading
